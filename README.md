@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # What2Eat Flutter Starter
 
 This is a blank Android Flutter project with one starter screen. Put your first
@@ -36,3 +37,6 @@ project. Keep .env out of Git and use only a publishable key in the app.
 When you add Supabase initialization in Dart, read these values using
 String.fromEnvironment and run Flutter with --dart-define-from-file=.env.
 The starter screen runs without configuration until Supabase is added.
+=======
+# What2Eat
+>>>>>>> origin/main
