@@ -20,7 +20,7 @@ screen in lib/main.dart.
    If several devices are listed, select the Android emulator in the toolbar
    and run lib/main.dart, or use flutter run -d followed by its device ID.
 
-The screen should show “What2Eat Starter” and “Ready to build.”
+The app opens the What2Eat login interface. Use the shared Username/Email and password sign-in page. Choose Sign up for customer or Sign up for vendors to open separate registration forms. Role detection awaits authentication integration. Password visibility and checkboxes are local UI state. Submission, recovery, and policy links display preview messages; no authentication or Supabase calls are made.
 
 ## Starter folders
 
@@ -36,3 +36,5 @@ project. Keep .env out of Git and use only a publishable key in the app.
 When you add Supabase initialization in Dart, read these values using
 String.fromEnvironment and run Flutter with --dart-define-from-file=.env.
 The starter screen runs without configuration until Supabase is added.
+
+
