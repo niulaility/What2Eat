@@ -1,8 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'features/authentication/auth_page.dart';
 
-void main() => runApp(const What2EatStarter());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: const String.fromEnvironment(
+      'SUPABASE_URL',
+      defaultValue: 'https://kkrmdpwwruhttzxeghty.supabase.co',
+    ),
+    anonKey: const String.fromEnvironment(
+      'SUPABASE_PUBLISHABLE_KEY',
+      defaultValue: 'sb_publishable_bzL-uzqf6Iu6kPGnSqaHxA_06Fbbl4N',
+    ),
+  );
+
+  runApp(const What2EatStarter());
+}
 
 class What2EatStarter extends StatelessWidget {
   const What2EatStarter({super.key});
