@@ -2,6 +2,11 @@ import 'vendor_registration_page.dart';
 import 'registration_success_page.dart';
 
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../student/customer_dashboard_page.dart';
+import '../vendor/vendor_dashboard_page.dart';
+import '../admin/admin_dashboard_page.dart';
 
 import 'registration_validators.dart';
 
@@ -21,6 +26,9 @@ class _AuthPageState extends State<AuthPage> {
   final confirmationKey = GlobalKey<FormFieldState<String>>();
   bool confirmationEdited = false;
   final registrationPassword = TextEditingController();
+  final signInIdentifier = TextEditingController();
+  final signInPassword = TextEditingController();
+  bool isSigningIn = false;
   bool submitted = false;
   Uint8List? profilePhoto;
   String? university;
@@ -31,6 +39,8 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void dispose() {
     registrationPassword.dispose();
+    signInIdentifier.dispose();
+    signInPassword.dispose();
     super.dispose();
   }
 
@@ -50,6 +60,84 @@ class _AuthPageState extends State<AuthPage> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> signIn() async {
+    final identifier = signInIdentifier.text.trim();
+    final password = signInPassword.text;
+
+    if (identifier.isEmpty || password.isEmpty) {
+      preview('Please enter your username/email and password.');
+      return;
+    }
+
+    setState(() => isSigningIn = true);
+
+    try {
+      String email = identifier;
+
+      // If username entered, resolve to email via SECURITY DEFINER RPC
+      if (!identifier.contains('@')) {
+        final result = await Supabase.instance.client
+            .rpc('get_email_by_username', params: {'p_username': identifier});
+
+        if (result == null || (result as String).isEmpty) {
+          throw const AuthException('No account found with this username.');
+        }
+        email = result as String;
+      }
+
+      // Authenticate
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      final user = response.user;
+      if (user == null) {
+        throw const AuthException('Sign in failed. Please try again.');
+      }
+
+      // Fetch role and name from profiles
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('role, full_name, username')
+          .eq('id', user.id)
+          .single();
+
+      final role = profile['role'] as String? ?? 'student';
+      final name = (profile['full_name'] as String?)?.trim().isNotEmpty == true
+          ? profile['full_name'] as String
+          : (profile['username'] as String? ?? 'User');
+
+      if (!mounted) return;
+
+      // Navigate to respective dashboard
+      Widget destination;
+      switch (role) {
+        case 'admin':
+          destination = AdminDashboardPage(name: name);
+          break;
+        case 'vendor':
+          destination = VendorDashboardPage(name: name);
+          break;
+        case 'student':
+        default:
+          destination = CustomerDashboardPage(name: name);
+          break;
+      }
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => destination),
+        (route) => false,
+      );
+    } on AuthException catch (e) {
+      if (mounted) preview(e.message);
+    } catch (e) {
+      if (mounted) preview('Sign in failed: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => isSigningIn = false);
+    }
+  }
+
   void openRegistration(String role) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -67,6 +155,7 @@ class _AuthPageState extends State<AuthPage> {
     TextInputType? keyboard,
     bool password = false,
     bool confirmation = false,
+    TextEditingController? controller,
   }) {
     final obscure = confirmation ? confirmHidden : hidden;
     final customer = register && !vendor;
@@ -95,9 +184,10 @@ class _AuthPageState extends State<AuthPage> {
                       confirmationKey.currentState?.validate();
                     }
                   },
-            controller: customer && password && !confirmation
-                ? registrationPassword
-                : null,
+            controller: controller ??
+                (customer && password && !confirmation
+                    ? registrationPassword
+                    : null),
             validator: !customer
                 ? null
                 : switch (label) {
@@ -744,12 +834,14 @@ class _AuthPageState extends State<AuthPage> {
                   'Enter your username or email',
                   Icons.person_outline,
                   keyboard: TextInputType.text,
+                  controller: signInIdentifier,
                 ),
                 field(
                   'Password',
                   'Enter your password',
                   Icons.lock_outline,
                   password: true,
+                  controller: signInPassword,
                 ),
                 const SizedBox(height: 6),
                 FilledButton(
@@ -761,13 +853,23 @@ class _AuthPageState extends State<AuthPage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  onPressed: () => preview(
-                    'Interface preview only — login is not connected.',
-                  ),
-                  child: const Text(
-                    'Sign in',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
+                  onPressed: isSigningIn ? null : signIn,
+                  child: isSigningIn
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Color(0xFF253729),
+                          ),
+                        )
+                      : const Text(
+                          'Sign in',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 18),
                 Row(
