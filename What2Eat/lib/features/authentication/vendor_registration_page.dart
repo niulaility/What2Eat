@@ -55,6 +55,17 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
   void message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
+  void showApplicationPendingPage({bool? receiptEmailSent}) {
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => VendorApplicationPendingPage(
+          receiptEmailSent: receiptEmailSent,
+        ),
+      ),
+    );
+  }
+
   void moveTo(int value) {
     FocusScope.of(context).unfocus();
     setState(() => step = value);
@@ -90,40 +101,58 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
           return;
         }
       }
-      User? user;
-      try {
-        final response = await client.auth.signUp(
-          email: values['Email Address']!.toLowerCase(),
-          password: password.text,
-          data: {
-            'role': 'vendor',
+      final email = values['Email Address']!.toLowerCase();
+      User? user = client.auth.currentUser;
+      var signupEmailRateLimited = false;
+      if (user != null && user.email?.toLowerCase() != email) {
+        // The form's email is the identity being registered. Clear any
+        // unrelated session before creating or resuming that account.
+        await client.auth.signOut();
+        user = null;
+      }
+      if (user == null) {
+        final createResponse = await client.functions.invoke(
+          'vendor-create-account',
+          body: {
+            'email': email,
+            'password': password.text,
             'username': values['Username'],
             'full_name': values['Full Name'],
             'phone_number': values['Phone Number'],
             'terms_accepted': true,
           },
         );
-        user = response.user;
-      } on AuthException catch (error) {
-        final authMessage = error.message.toLowerCase();
-        if (!authMessage.contains('already registered') &&
-            !authMessage.contains('already exists') &&
-            !authMessage.contains('user exists')) {
-          rethrow;
+        if (createResponse.status < 200 ||
+            createResponse.status >= 300 ||
+            createResponse.data is! Map ||
+            createResponse.data['ready_to_sign_in'] != true) {
+          throw const AuthException('Could not prepare the vendor account.');
         }
       }
       if (client.auth.currentSession == null) {
         try {
           final response = await client.auth.signInWithPassword(
-            email: values['Email Address']!.toLowerCase(),
+            email: email,
             password: password.text,
           );
           user = response.user;
         } on AuthException catch (error) {
+          // A previous attempt may already have saved a pending vendor row.
+          // The approval hook refuses a session for that account; treat that
+          // response as confirmation of the existing submission.
+          if (error.message
+              .toLowerCase()
+              .contains('awaiting administrator approval')) {
+            showApplicationPendingPage();
+            return;
+          }
           if (mounted) {
-            message(error.message.toLowerCase().contains('not confirmed')
-                ? 'Confirm your email, return to this form, then tap Register again.'
-                : error.message);
+            if (error.message.toLowerCase().contains('not confirmed')) {
+              message(
+                  'This account was created before vendor email confirmation was disabled. Confirm it once, then retry registration.');
+            } else {
+              message(error.message);
+            }
           }
           return;
         }
@@ -149,18 +178,30 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
         await client.storage.from('vendor-logos').uploadBinary(path, logoBytes);
         logoUrl = client.storage.from('vendor-logos').getPublicUrl(path);
       }
+      await client.from('vendors').upsert({
+        'user_id': user.id,
+        'business_name': values['Business Name'],
+        'business_description': values['Business Description'],
+        'business_contact_number': values['Business Contact Number'],
+        'business_address': values['Business Address'],
+        // Set the values checked by the INSERT RLS policy explicitly so
+        // signup does not depend on a hosted DB column default being current.
+        'status': 'pending',
+        'is_active': false,
+        'reviewed_at': null,
+        'rejection_reason': null,
+        if (logoUrl != null) 'logo_url': logoUrl,
+      }, onConflict: 'user_id');
       final vendor = await client
           .from('vendors')
-          .upsert({
-            'user_id': user.id,
-            'business_name': values['Business Name'],
-            'business_description': values['Business Description'],
-            'business_contact_number': values['Business Contact Number'],
-            'business_address': values['Business Address'],
-            if (logoUrl != null) 'logo_url': logoUrl,
-          }, onConflict: 'user_id')
           .select('id')
-          .single();
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (vendor == null) {
+        throw const AuthException(
+          'The vendor application was saved without a readable vendor record. Check the vendors SELECT policy for this account.',
+        );
+      }
       final available = await client
           .from('universities')
           .select('id, name')
@@ -209,11 +250,35 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
       if (documents.isNotEmpty) {
         await client.from('vendor_documents').insert(documents);
       }
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-            builder: (_) => const VendorApplicationPendingPage()),
-      );
+      var receiptEmailSent = false;
+      try {
+        final emailResponse = await client.functions.invoke(
+          'vendor-application-received',
+          body: const <String, dynamic>{},
+        );
+        receiptEmailSent = emailResponse.status >= 200 &&
+            emailResponse.status < 300 &&
+            emailResponse.data is Map &&
+            emailResponse.data['sent'] == true;
+        if (!receiptEmailSent) {
+          debugPrint(
+            'Vendor application receipt email was not sent: ${emailResponse.data}',
+          );
+        }
+      } catch (error) {
+        // The application is saved; report email failure on the pending page.
+        debugPrint('Vendor application email failed: $error');
+      }
+      // A submitted application is not an active vendor session. The database
+      // access-token hook also blocks subsequent sign-ins until approval.
+      // Sign-out is best-effort: the application has already been saved, so a
+      // transient auth/network error must not keep the user on the form.
+      try {
+        await client.auth.signOut();
+      } catch (error) {
+        debugPrint('Could not sign out after vendor submission: $error');
+      }
+      showApplicationPendingPage(receiptEmailSent: receiptEmailSent);
     } on AuthException catch (error) {
       debugPrint('Vendor signup AuthException: $error');
       if (mounted) {
@@ -230,8 +295,10 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
         message(details.join(' · '));
       }
     } on PostgrestException catch (error) {
+      debugPrint('Vendor registration PostgrestException: $error');
       if (mounted) message('Registration could not be saved: ${error.message}');
     } on StorageException catch (error) {
+      debugPrint('Vendor registration StorageException: $error');
       if (mounted) {
         message('A registration file could not be uploaded: ${error.message}');
       }

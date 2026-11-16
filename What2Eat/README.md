@@ -20,21 +20,59 @@ screen in lib/main.dart.
    If several devices are listed, select the Android emulator in the toolbar
    and run lib/main.dart, or use flutter run -d followed by its device ID.
 
-The app opens the What2Eat login interface. Use the shared Username/Email and password sign-in page. Choose Sign up for customer or Sign up for vendors to open separate registration forms. Role detection awaits authentication integration. Password visibility and checkboxes are local UI state. Submission, recovery, and policy links display preview messages; no authentication or Supabase calls are made.
+The app opens the What2Eat login interface. Choose customer or vendor registration to create an account through Supabase. Email confirmation is required by the hosted project.
 
-## Starter folders
-
-Use lib/features for feature code and supabase for future database files.
-The folders contain placeholders so Git preserves them.
-
-## 4. Prepare shared configuration for all teammates
+## Supabase setup
 
 Commit .env.example so everyone has the same template. Each teammate copies it
 to .env and fills in the Supabase project URL and publishable key for the team
 project. Keep .env out of Git and use only a publishable key in the app.
 
-When you add Supabase initialization in Dart, read these values using
-String.fromEnvironment and run Flutter with --dart-define-from-file=.env.
-The starter screen runs without configuration until Supabase is added.
+The app reads `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` from
+`String.fromEnvironment`. The committed `.env.example` is JSON, so a local `.env`
+can be passed with `flutter run --dart-define-from-file=.env`.
+
+Apply the SQL files in `supabase/migrations` to the hosted project before
+registering users. To apply a pending migration manually, open the project's
+Supabase Dashboard, choose **SQL Editor**, create a query, paste the full SQL
+file contents, and run it. For this signup-trigger fix, run
+`supabase/migrations/20261116000005_harden_auth_user_trigger.sql`.
+
+To require administrator approval before vendor sign-in, also run
+`supabase/migrations/20261116000008_vendor_admin_approval.sql` and
+`supabase/migrations/20261116000009_vendor_signup_rate_limit.sql` and
+`supabase/migrations/20261116000010_protect_profile_roles.sql` and
+`supabase/migrations/20261116000011_remove_vendor_signup_rate_limit.sql`. Then open
+**Authentication → Hooks** in the Supabase Dashboard, add a **Custom Access
+Token** hook, and select `public.enforce_vendor_approval_for_auth`. Save and
+enable the hook. Pending and rejected vendors will be blocked from receiving
+new or refreshed access tokens; vendors without an application row can still
+finish registration. The vendor-only account creation function confirms new
+vendor email addresses server-side, so leave the project's global email
+confirmation setting enabled for students. The admin dashboard can inspect
+submitted documents and approve or reject pending applications.
+
+To email vendors when their applications are received, set the Edge Function
+secrets in the linked Supabase project and deploy the function:
+
+```powershell
+supabase secrets set RESEND_API_KEY=re_your_resend_api_key RESEND_FROM_EMAIL="What2Eat <no-reply@auth.w11x.my>"
+supabase functions deploy vendor-create-account --no-verify-jwt
+supabase functions deploy vendor-application-received
+supabase functions deploy vendor-review-notification
+```
+
+Use the Resend API key as `RESEND_API_KEY`; do not put it in the Flutter app or
+`.env`. Supabase injects the service-role key into Edge Functions; it must never
+be added to the app. The sender address must belong to the verified sending
+domain in Resend. The account-creation function uses the service-role key only
+on the server. The receipt function sends
+only to the authenticated vendor's own email after their pending application
+has been saved. The review-notification function sends the approval or rejection
+decision to the vendor after an administrator reviews the application. If that
+email fails, the review remains saved and the admin dashboard shows a warning.
+
+The publishable key only connects the app to Supabase APIs; it cannot apply
+database migrations. After applying SQL, fully restart the app and retry signup.
 
 

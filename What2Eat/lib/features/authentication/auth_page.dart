@@ -176,6 +176,30 @@ class _AuthPageState extends State<AuthPage> {
           ? profile['full_name'] as String
           : (profile['username'] as String? ?? 'User');
 
+      if (role == 'vendor') {
+        final application = await Supabase.instance.client
+            .from('vendors')
+            .select('status, is_active')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        if (application == null) {
+          await Supabase.instance.client.auth.signOut();
+          if (mounted) {
+            preview('Submit your vendor application before signing in.');
+          }
+          return;
+        }
+        if (application['status'] != 'approved' ||
+            application['is_active'] != true) {
+          await Supabase.instance.client.auth.signOut();
+          if (mounted) {
+            preview(
+                'Your vendor application is being reviewed by an administrator. You can sign in after it is approved.');
+          }
+          return;
+        }
+      }
+
       if (!mounted) return;
 
       // Navigate to respective dashboard
@@ -198,7 +222,19 @@ class _AuthPageState extends State<AuthPage> {
         (route) => false,
       );
     } on AuthException catch (e) {
-      if (mounted) preview(e.message);
+      if (mounted) {
+        final detail = e.message.toLowerCase();
+        if (detail.contains('vendor application was rejected')) {
+          preview(
+              'Your vendor application was rejected. Please contact What2Eat for assistance.');
+        } else if (detail.contains('awaiting administrator approval') ||
+            detail.contains('vendor application is awaiting')) {
+          preview(
+              'Your vendor application is being reviewed by an administrator. You can sign in after it is approved.');
+        } else {
+          preview(e.message);
+        }
+      }
     } catch (e) {
       if (mounted) preview('Sign in failed: ${e.toString()}');
     } finally {
