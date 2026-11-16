@@ -20,6 +20,7 @@ void main() {
 
       final inputs = find.byType(TextFormField);
       const values = [
+        'Kitchen Owner',
         'kitchen_01',
         'owner@example.com',
         '0123456789',
@@ -82,7 +83,7 @@ void main() {
       expect(find.text('Account Information'), findsOneWidget);
       expect(
         tester
-            .widget<TextFormField>(find.byType(TextFormField).at(3))
+            .widget<TextFormField>(find.byType(TextFormField).at(4))
             .controller!
             .text,
         'Kitchen123!',
