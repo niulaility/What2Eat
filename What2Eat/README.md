@@ -22,6 +22,21 @@ screen in lib/main.dart.
 
 The app opens the What2Eat login interface. Choose customer or vendor registration to create an account through Supabase. Email confirmation is required by the hosted project.
 
+## Windows Kotlin cache errors
+
+`android/gradle.properties` disables Kotlin incremental compilation and runs the
+compiler in the Gradle process. This avoids the incremental-cache close errors
+seen in Android dependencies with this Windows checkout and its dependency
+cache. These settings apply to normal `flutter run` and APK builds; Kotlin
+compilation may take longer when dependency sources change.
+
+Password reset website source and deployment instructions are maintained in
+[Edwin0519/what2eat-password-reset](https://github.com/Edwin0519/what2eat-password-reset).
+The live page is https://what2eat-password-reset.vercel.app/ .
+A successful reset request does not prove email
+delivery; use an existing What2Eat customer account and verify the email link,
+password update, and subsequent sign-in before treating the flow as complete.
+
 ## Supabase setup
 
 Commit .env.example so everyone has the same template. Each teammate copies it
