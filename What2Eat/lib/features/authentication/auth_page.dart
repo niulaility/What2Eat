@@ -9,6 +9,7 @@ import '../vendor/vendor_dashboard_page.dart';
 import '../admin/admin_dashboard_page.dart';
 
 import 'registration_validators.dart';
+import 'forgot_password_page.dart';
 
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
@@ -990,6 +991,19 @@ class _AuthPageState extends State<AuthPage> {
                       Icons.lock_outline,
                       password: true,
                       controller: signInPassword,
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: isSigningIn
+                            ? null
+                            : () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => const ForgotPasswordPage(),
+                                  ),
+                                ),
+                        child: const Text('Forgot password?'),
+                      ),
                     ),
                     const SizedBox(height: 6),
                     FilledButton(
