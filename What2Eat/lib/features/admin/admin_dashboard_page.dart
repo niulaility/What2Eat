@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../authentication/auth_page.dart';
+import '../profile/account_page.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key, required this.name});
@@ -13,6 +14,7 @@ class AdminDashboardPage extends StatefulWidget {
 }
 
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
+  late String _name = widget.name;
   final _client = Supabase.instance.client;
   late Future<List<Map<String, dynamic>>> _applications;
 
@@ -158,8 +160,29 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             tooltip: 'Account options',
             onSelected: (value) {
               if (value == 'logout') _logout();
+              if (value == 'profile') {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AccountPage(
+                      onUpdated: (profile) {
+                        if (mounted) {
+                          setState(() => _name = profile.displayName);
+                        }
+                      },
+                    ),
+                  ),
+                );
+              }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'profile',
+                child: Row(children: [
+                  Icon(Icons.person_outline, size: 20),
+                  SizedBox(width: 12),
+                  Text('Profile'),
+                ]),
+              ),
               PopupMenuItem(
                 value: 'logout',
                 child: Row(
@@ -201,7 +224,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
               children: [
                 Text(
-                  'Welcome, ${widget.name}',
+                  'Welcome, $_name',
                   style: const TextStyle(
                     fontSize: 25,
                     fontWeight: FontWeight.w900,
