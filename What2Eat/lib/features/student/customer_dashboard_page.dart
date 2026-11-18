@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../authentication/auth_page.dart';
+import '../profile/account_page.dart';
 
-class CustomerDashboardPage extends StatelessWidget {
+class CustomerDashboardPage extends StatefulWidget {
   const CustomerDashboardPage({super.key, required this.name});
 
   final String name;
+
+  @override
+  State<CustomerDashboardPage> createState() => _CustomerDashboardPageState();
+}
+
+class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
+  late String _name = widget.name;
 
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -41,8 +49,16 @@ class CustomerDashboardPage extends StatelessWidget {
             tooltip: 'Account options',
             onSelected: (value) {
               if (value == 'profile') {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Profile coming soon.')),
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AccountPage(
+                      onUpdated: (profile) {
+                        if (mounted) {
+                          setState(() => _name = profile.displayName);
+                        }
+                      },
+                    ),
+                  ),
                 );
               } else if (value == 'logout') {
                 _logout(context);
@@ -81,7 +97,7 @@ class CustomerDashboardPage extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                'Welcome, $name',
+                'Welcome, $_name',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 28,
