@@ -216,8 +216,10 @@ class SupabaseProfileRepository implements ProfileRepository {
           'Check your profile details and selected photo, then try again.',
         );
       }
-      throw const ProfileFailure(
-        'Could not save or load your profile. Check your connection and try again.',
+      throw ProfileFailure(
+        error.message.isNotEmpty
+            ? error.message
+            : 'Could not save or load your profile. Check your connection and try again.',
       );
     } on StorageException {
       throw const ProfileFailure(
