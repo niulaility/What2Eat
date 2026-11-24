@@ -37,4 +37,28 @@ When you add Supabase initialization in Dart, read these values using
 String.fromEnvironment and run Flutter with --dart-define-from-file=.env.
 The starter screen runs without configuration until Supabase is added.
 
+## Password reset
+
+The **Forgot password?** flow sends a Supabase Auth recovery email and returns
+the customer to the app to set a new password. In the Supabase Dashboard, open
+**Authentication → URL Configuration** and add this exact value to **Redirect
+URLs**:
+
+```text
+what2eat://login-callback/
+```
+
+Keep the Supabase Auth password recovery email template enabled and use its
+`{{ .ConfirmationURL }}` link (or the dashboard's equivalent default recovery
+link). Supabase verifies the one-time recovery link before the app displays the
+new-password form. Unknown email addresses receive the same in-app confirmation
+message as registered accounts to avoid account enumeration. Supabase's Auth
+rate limits remain in force, with an additional short resend cooldown in the
+app.
+
+The redirect can be overridden for a different app scheme with
+`--dart-define=PASSWORD_RESET_REDIRECT_URL=your-scheme://login-callback/`; add
+that exact redirect to the Supabase allow-list and register the matching native
+URL scheme before using it.
+
 
