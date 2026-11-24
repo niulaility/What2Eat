@@ -3,11 +3,29 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../authentication/auth_page.dart';
 import '../profile/account_page.dart';
+import '../profile/profile_repository.dart';
+import 'vendor_application_details_page.dart';
+import 'vendor_application_preview_data.dart';
+import 'admin_accounts_page.dart';
+import 'admin_reviews_page.dart';
+import 'admin_universities_page.dart';
 
+const _cream = Color(0xFFFFFCF5);
+const _ink = Color(0xFF253729);
+const _green = Color(0xFF344B35);
+const _muted = Color(0xFF596451);
+const _line = Color(0xFFCBD2BE);
+const _gold = Color(0xFFFFD85C);
+
+/// The admin home interface. Application data is illustrative and read-only.
 class AdminDashboardPage extends StatefulWidget {
-  const AdminDashboardPage({super.key, required this.name});
-
+  const AdminDashboardPage({
+    super.key,
+    required this.name,
+    this.profileRepository,
+  });
   final String name;
+  final ProfileRepository? profileRepository;
 
   @override
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
@@ -15,173 +33,120 @@ class AdminDashboardPage extends StatefulWidget {
 
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   late String _name = widget.name;
-  final _client = Supabase.instance.client;
-  late Future<List<Map<String, dynamic>>> _applications;
+  bool _expanded = false;
+  int _selectedTab = 0;
+  final _scroll = ScrollController();
+  final _universities = ValueNotifier<List<String>>(
+    List.of(sampleUniversityNames),
+  );
+
+  void _selectTab(int index) {
+    setState(() => _selectedTab = index);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
 
   @override
-  void initState() {
-    super.initState();
-    _applications = _loadApplications();
+  void dispose() {
+    _scroll.dispose();
+    _universities.dispose();
+    super.dispose();
   }
 
-  Future<List<Map<String, dynamic>>> _loadApplications() async {
-    final rows = await _client
-        .from('vendors')
-        .select(
-          'id, user_id, business_name, business_description, '
-          'business_contact_number, business_address, logo_url, submitted_at',
-        )
-        .eq('status', 'pending')
-        .order('submitted_at');
-    return List<Map<String, dynamic>>.from(rows);
-  }
-
-  void _refresh() {
-    setState(() => _applications = _loadApplications());
-  }
-
-  Future<void> _review(
-      Map<String, dynamic> application, String decision) async {
-    String? reason;
-    if (decision == 'rejected') {
-      final controller = TextEditingController();
-      reason = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Reject application'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            minLines: 2,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'Reason for rejection',
-              hintText: 'Tell the vendor what needs to be corrected',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.isNotEmpty) Navigator.pop(dialogContext, value);
-              },
-              child: const Text('Reject'),
-            ),
-          ],
+  Future<void> _openProfile() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AccountPage(
+          repository: widget.profileRepository,
+          onUpdated: (profile) {
+            if (mounted) setState(() => _name = profile.displayName);
+          },
         ),
-      );
-      controller.dispose();
-      if (reason == null || !mounted) return;
-    }
-
-    try {
-      await _client.rpc(
-        'review_vendor_application',
-        params: {
-          'p_vendor_id': application['id'],
-          'p_decision': decision,
-          'p_rejection_reason': reason,
-        },
-      );
-      var decisionEmailSent = false;
-      try {
-        final response = await _client.functions.invoke(
-          'vendor-review-notification',
-          body: {'vendor_id': application['id']},
-        );
-        decisionEmailSent = response.status >= 200 &&
-            response.status < 300 &&
-            response.data is Map &&
-            response.data['sent'] == true;
-      } catch (error) {
-        debugPrint('Vendor decision email failed: $error');
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${decision == 'approved' ? 'Vendor approved. They can now sign in.' : 'Application rejected.'}'
-            '${decisionEmailSent ? '' : ' Decision email could not be sent; check the Edge Function and Resend settings.'}',
-          ),
-        ),
-      );
-      _refresh();
-    } on PostgrestException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Could not review application: ${error.message}')),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not review application: $error')),
-      );
-    }
-  }
-
-  Future<void> _logout() async {
-    await _client.auth.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const AuthPage()),
-      (route) => false,
+      ),
     );
   }
 
+  Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const AuthPage()),
+      (_) => false,
+    );
+  }
+
+  TextStyle _text(
+    double size, {
+    Color color = _ink,
+    FontWeight weight = FontWeight.w400,
+  }) => TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: size,
+    height: 1.4,
+    color: color,
+    fontWeight: weight,
+  );
+
   @override
   Widget build(BuildContext context) {
+    final firstName = _name.trim().isEmpty
+        ? 'Admin'
+        : _name.trim().split(RegExp(r'\s+')).first;
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFCF5),
+      backgroundColor: _cream,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFFFFCF5),
-        elevation: 0,
-        title: const Text(
-          'Admin Dashboard',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF253729),
+        automaticallyImplyLeading: false,
+        backgroundColor: _cream,
+        surfaceTintColor: Colors.transparent,
+        toolbarHeight: 72,
+        titleSpacing: 16,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: _gold,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.ramen_dining_rounded,
+                  size: 28,
+                  color: _ink,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'What2Eat',
+                style: _text(24, color: _green, weight: FontWeight.w700),
+              ),
+            ],
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Refresh applications',
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
-          ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.account_circle_outlined,
-                size: 28, color: Color(0xFF344B35)),
             tooltip: 'Account options',
+            icon: const Icon(
+              Icons.account_circle_outlined,
+              size: 28,
+              color: _green,
+            ),
             onSelected: (value) {
+              if (value == 'profile') _openProfile();
               if (value == 'logout') _logout();
-              if (value == 'profile') {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => AccountPage(
-                      onUpdated: (profile) {
-                        if (mounted) {
-                          setState(() => _name = profile.displayName);
-                        }
-                      },
-                    ),
-                  ),
-                );
-              }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (_) => const [
               PopupMenuItem(
                 value: 'profile',
-                child: Row(children: [
-                  Icon(Icons.person_outline, size: 20),
-                  SizedBox(width: 12),
-                  Text('Profile'),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, size: 20),
+                    SizedBox(width: 12),
+                    Text('Profile'),
+                  ],
+                ),
               ),
               PopupMenuItem(
                 value: 'logout',
@@ -198,257 +163,353 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async => _refresh(),
-        child: FutureBuilder<List<Map<String, dynamic>>>(
-          future: _applications,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(24),
-                children: [
-                  Text('Could not load applications: ${snapshot.error}'),
-                  const SizedBox(height: 12),
-                  OutlinedButton(
-                      onPressed: _refresh, child: const Text('Retry')),
-                ],
-              );
-            }
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final applications = snapshot.data!;
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-              children: [
-                Text(
-                  'Welcome, $_name',
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF253729),
-                  ),
+      body: CustomPaint(
+        painter: _HomeBackdrop(),
+        child: SizedBox.expand(
+          child: SingleChildScrollView(
+            controller: _scroll,
+            key: const ValueKey('admin-dashboard-scroll'),
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 850),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_selectedTab == 1)
+                      const AdminReviewsPage()
+                    else if (_selectedTab == 2)
+                      const AdminAccountsPage()
+                    else if (_selectedTab == 3)
+                      AdminUniversitiesPage(universities: _universities)
+                    else ...[
+                      Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: 'Welcome back, ',
+                              style: _text(22, color: _muted),
+                            ),
+                            TextSpan(
+                              text: '$firstName! 👋',
+                              style: _text(28, weight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                        style: _text(22),
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        key: const ValueKey('pending-applications-panel'),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: _line),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _green.withValues(alpha: .05),
+                              blurRadius: 20,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Pending vendor applications',
+                              style: _text(21, weight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 20),
+                            for (final application
+                                in vendorApplicationPreviews
+                                    .where(
+                                      (application) =>
+                                          application.status ==
+                                          ApplicationReviewStatus.pending,
+                                    )
+                                    .take(
+                                      _expanded
+                                          ? vendorApplicationPreviews.length
+                                          : 2,
+                                    )) ...[
+                              _applicationCard(application),
+                              const SizedBox(height: 16),
+                            ],
+                            OutlinedButton.icon(
+                              key: const ValueKey('toggle-applications'),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                                foregroundColor: _green,
+                                side: const BorderSide(color: _muted),
+                              ),
+                              onPressed: () =>
+                                  setState(() => _expanded = !_expanded),
+                              icon: Icon(
+                                _expanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
+                              ),
+                              label: Text(
+                                _expanded ? 'Show less' : 'Show more (1)',
+                                style: _text(16, color: _green),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        key: const ValueKey('new-accounts-panel'),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: _line),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Newly registered accounts',
+                              style: _text(21, weight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 16),
+                            for (final account in accountPreviews.take(2))
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: AdminAccountCard(
+                                  account: account,
+                                  compact: true,
+                                ),
+                              ),
+                            TextButton.icon(
+                              onPressed: () => _selectTab(2),
+                              icon: const Icon(Icons.people_outline),
+                              label: const Text('View all accounts'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Sample content · Interface preview',
+                        textAlign: TextAlign.center,
+                        style: _text(12, color: _muted),
+                      ),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Review vendor applications before granting access.',
-                  style: TextStyle(color: Color(0xFF596451)),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Pending applications (${applications.length})',
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF253729),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (applications.isEmpty)
-                  const Card(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child:
-                          Text('There are no vendor applications to review.'),
+              ),
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+          decoration: BoxDecoration(
+            color: _cream,
+            borderRadius: BorderRadius.circular(25),
+            border: Border.all(color: _ink, width: .8),
+          ),
+          child: Row(
+            children: [
+              for (final tab in const [
+                (label: 'Home', icon: Icons.home_outlined),
+                (label: 'Reviews', icon: Icons.fact_check_outlined),
+                (label: 'Accounts', icon: Icons.people_outline),
+                (label: 'Universities', icon: Icons.school_outlined),
+                (label: 'Settings', icon: Icons.settings_outlined),
+              ])
+                Expanded(
+                  child: Semantics(
+                    selected: _tabSelected(tab.label),
+                    button: true,
+                    enabled: _tabEnabled(tab.label),
+                    child: InkWell(
+                      key: ValueKey('admin-tab-${tab.label}'),
+                      onTap: _tabEnabled(tab.label)
+                          ? () => _selectTab(_tabIndex(tab.label))
+                          : null,
+                      borderRadius: BorderRadius.circular(18),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 15,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _tabSelected(tab.label)
+                                    ? _gold
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                tab.icon,
+                                size: 25,
+                                color: _tabSelected(tab.label)
+                                    ? _green
+                                    : _muted,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              tab.label,
+                              textAlign: TextAlign.center,
+                              style: _text(
+                                12,
+                                color: _tabSelected(tab.label) ? _ink : _muted,
+                                weight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ...applications.map((application) => _ApplicationCard(
-                      application: application,
-                      onApprove: () => _review(application, 'approved'),
-                      onReject: () => _review(application, 'rejected'),
-                    )),
-              ],
-            );
-          },
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
-}
 
-class _ApplicationCard extends StatelessWidget {
-  const _ApplicationCard({
-    required this.application,
-    required this.onApprove,
-    required this.onReject,
-  });
+  int _tabIndex(String label) => switch (label) {
+    'Reviews' => 1,
+    'Accounts' => 2,
+    'Universities' => 3,
+    _ => 0,
+  };
+  bool _tabEnabled(String label) =>
+      ['Home', 'Reviews', 'Accounts', 'Universities'].contains(label);
+  bool _tabSelected(String label) =>
+      _tabEnabled(label) && _tabIndex(label) == _selectedTab;
 
-  final Map<String, dynamic> application;
-  final VoidCallback onApprove;
-  final VoidCallback onReject;
-
-  Future<void> _showDocuments(BuildContext context) async {
-    try {
-      final client = Supabase.instance.client;
-      final rows = await client
-          .from('vendor_documents')
-          .select('document_type, file_url')
-          .eq('vendor_id', application['id']);
-      final documents = <Map<String, String>>[];
-      for (final row in rows) {
-        final path = row['file_url'] as String;
-        documents.add({
-          'type': row['document_type'] as String,
-          'url': await client.storage
-              .from('vendor-documents')
-              .createSignedUrl(path, 300),
-        });
-      }
-      if (!context.mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Application documents'),
-          content: SizedBox(
-            width: 520,
-            child: documents.isEmpty
-                ? const Text('No documents were submitted.')
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: documents.length,
-                    itemBuilder: (context, index) {
-                      final document = documents[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              document['type']!
-                                  .replaceAll('_', ' ')
-                                  .toUpperCase(),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            const SizedBox(height: 8),
-                            Image.network(
-                              document['url']!,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Text(
-                                  'Could not display this document image.'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-          ],
+  Widget _applicationCard(VendorApplicationPreview application) => Material(
+    key: ValueKey(
+      'admin-application-${application.id.substring(application.id.length - 3)}',
+    ),
+    color: _cream,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: const BorderSide(color: _line),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: () => Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              VendorApplicationDetailsPage(application: application),
         ),
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load application documents: $error')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final logoUrl = application['logo_url'] as String?;
-    final submittedAt =
-        DateTime.tryParse(application['submitted_at'] as String? ?? '');
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      color: Colors.white,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: const Color(0xFFFFEDAA),
-                  backgroundImage:
-                      logoUrl == null ? null : NetworkImage(logoUrl),
-                  child: logoUrl == null
-                      ? const Icon(Icons.storefront_outlined,
-                          color: Color(0xFF344B35))
-                      : null,
+                Container(
+                  width: 62,
+                  height: 62,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF1E4),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Image.asset(
+                    application.logoAsset,
+                    excludeFromSemantics: true,
+                  ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        application['business_name'] as String? ?? 'Vendor',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w800),
+                        application.businessName,
+                        style: _text(20, weight: FontWeight.w700),
                       ),
-                      if (submittedAt != null)
-                        Text(
-                            'Submitted ${submittedAt.toLocal().toString().substring(0, 16)}'),
+                      const SizedBox(height: 6),
+                      Text(application.owner, style: _text(14, color: _muted)),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Text(application['business_description'] as String? ?? ''),
-            const SizedBox(height: 10),
-            _DetailLine(
-                icon: Icons.phone_outlined,
-                text: application['business_contact_number'] as String? ?? ''),
-            _DetailLine(
-                icon: Icons.location_on_outlined,
-                text: application['business_address'] as String? ?? ''),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
+            const SizedBox(height: 18),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _showDocuments(context),
-                  icon: const Icon(Icons.folder_open_outlined),
-                  label: const Text('View documents'),
+                const Icon(Icons.schedule, color: _green, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Submitted ${application.submitted}',
+                    style: _text(14, color: _muted),
+                  ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: onReject,
-                  icon: const Icon(Icons.close, color: Colors.redAccent),
-                  label: const Text('Reject'),
+              ],
+            ),
+            const Divider(height: 28, color: _line),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'View application details',
+                    style: _text(15, color: _green, weight: FontWeight.w600),
+                  ),
                 ),
-                FilledButton.icon(
-                  onPressed: onApprove,
-                  icon: const Icon(Icons.check),
-                  label: const Text('Approve'),
-                ),
+                const Icon(Icons.arrow_forward_rounded, color: _green),
               ],
             ),
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-class _DetailLine extends StatelessWidget {
-  const _DetailLine({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
+class _HomeBackdrop extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = _gold.withValues(alpha: .08);
+    canvas.drawPath(
+      Path()
+        ..moveTo(size.width * .78, 0)
+        ..cubicTo(size.width * .60, 35, size.width * .97, 45, size.width, 125)
+        ..lineTo(size.width, 0)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, size.height * .65)
+        ..cubicTo(
+          size.width * .13,
+          size.height * .6,
+          size.width * .17,
+          size.height * .9,
+          size.width * .34,
+          size.height,
+        )
+        ..lineTo(0, size.height)
+        ..close(),
+      paint..color = const Color(0xFFEEF1E4).withValues(alpha: .6),
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 18, color: const Color(0xFF667A43)),
-            const SizedBox(width: 8),
-            Expanded(child: Text(text)),
-          ],
-        ),
-      );
+  bool shouldRepaint(covariant _HomeBackdrop oldDelegate) => false;
 }
