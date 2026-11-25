@@ -13,6 +13,10 @@ class CustomerDashboardPage extends StatefulWidget {
     required this.name,
     this.repository,
   });
+import '../profile/account_page.dart';
+
+class CustomerDashboardPage extends StatefulWidget {
+  const CustomerDashboardPage({super.key, required this.name});
 
   final String name;
   final CustomerDiscoveryRepository? repository;
@@ -74,6 +78,13 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       });
     }
   }
+
+  @override
+  State<CustomerDashboardPage> createState() => _CustomerDashboardPageState();
+}
+
+class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
+  late String _name = widget.name;
 
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -315,8 +326,16 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
             tooltip: 'Account options',
             onSelected: (value) {
               if (value == 'profile') {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Profile coming soon.')),
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AccountPage(
+                      onUpdated: (profile) {
+                        if (mounted) {
+                          setState(() => _name = profile.displayName);
+                        }
+                      },
+                    ),
+                  ),
                 );
               } else if (value == 'logout') {
                 _logout(context);
@@ -810,6 +829,8 @@ class _VendorDiscoveryCard extends StatelessWidget {
                 vendor.businessDescription,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+                'Welcome, $_name',
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 13,
                   height: 1.4,

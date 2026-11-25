@@ -2,9 +2,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Preview of the success screen; show after backend registration when connected.
 class RegistrationSuccessPage extends StatelessWidget {
-  const RegistrationSuccessPage({super.key});
+  const RegistrationSuccessPage({
+    super.key,
+    this.emailConfirmationRequired = false,
+    this.email,
+  });
+
+  final bool emailConfirmationRequired;
+  final String? email;
 
   @override
   Widget build(BuildContext context) {
@@ -105,8 +111,10 @@ class RegistrationSuccessPage extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Registration is successful',
+                      Text(
+                        emailConfirmationRequired
+                            ? 'Check your email'
+                            : 'Registration is successful',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 32,
@@ -116,6 +124,17 @@ class RegistrationSuccessPage extends StatelessWidget {
                           color: Color(0xFF253729),
                         ),
                       ),
+                      if (emailConfirmationRequired) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          'Tap the confirmation link sent to ${email ?? 'your email address'}, then sign in to continue.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFF74796C),
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 40),
                       Container(
                         decoration: BoxDecoration(
@@ -137,9 +156,8 @@ class RegistrationSuccessPage extends StatelessWidget {
                               borderRadius: BorderRadius.circular(18),
                             ),
                           ),
-                          onPressed: () =>
-                              Navigator.of(context)
-                                  .popUntil((route) => route.isFirst),
+                          onPressed: () => Navigator.of(context)
+                              .popUntil((route) => route.isFirst),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -183,8 +201,7 @@ class _CelebrationPainter extends CustomPainter {
     for (var i = 0; i < 18; i++) {
       final angle = i * math.pi * 2 / 18;
       final radius = 100.0 + (i % 3) * 10;
-      final position =
-          center +
+      final position = center +
           Offset(math.cos(angle) * radius, math.sin(angle) * radius * .88);
       final paint = Paint()..color = colors[i % colors.length];
       canvas.save();

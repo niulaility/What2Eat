@@ -10,6 +10,7 @@ import '../admin/admin_dashboard_page.dart';
 
 import 'registration_validators.dart';
 import 'password_reset_page.dart';
+import 'forgot_password_page.dart';
 
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
@@ -27,9 +28,14 @@ class _AuthPageState extends State<AuthPage> {
   final confirmationKey = GlobalKey<FormFieldState<String>>();
   bool confirmationEdited = false;
   final registrationPassword = TextEditingController();
+  final studentFullName = TextEditingController();
+  final studentUsername = TextEditingController();
+  final studentEmail = TextEditingController();
+  final studentPhone = TextEditingController();
   final signInIdentifier = TextEditingController();
   final signInPassword = TextEditingController();
   bool isSigningIn = false;
+  bool isRegistering = false;
   bool submitted = false;
   Uint8List? profilePhoto;
   String? university;
@@ -40,25 +46,88 @@ class _AuthPageState extends State<AuthPage> {
   @override
   void dispose() {
     registrationPassword.dispose();
+    studentFullName.dispose();
+    studentUsername.dispose();
+    studentEmail.dispose();
+    studentPhone.dispose();
     signInIdentifier.dispose();
     signInPassword.dispose();
     super.dispose();
   }
 
-  void submitCustomerRegistration() {
+  Future<void> submitCustomerRegistration() async {
+    if (isRegistering) return;
     setState(() => submitted = true);
     final valid = customerFormKey.currentState!.validate();
     if (!valid || !agreed) return;
     FocusScope.of(context).unfocus();
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const RegistrationSuccessPage()),
-    );
+    setState(() => isRegistering = true);
+    try {
+      final client = Supabase.instance.client;
+      final existingEmail = await client.rpc(
+        'get_email_by_username',
+        params: {'p_username': studentUsername.text.trim()},
+      );
+      final email = studentEmail.text.trim().toLowerCase();
+      if (existingEmail is String && existingEmail.isNotEmpty) {
+        if (mounted) {
+          preview(existingEmail.toLowerCase() == email
+              ? 'An account already uses this email. Please sign in.'
+              : 'That username is already taken. Choose another one.');
+        }
+        return;
+      }
+      final response = await client.auth.signUp(
+        email: email,
+        password: registrationPassword.text,
+        data: {
+          'role': 'student',
+          'username': studentUsername.text.trim(),
+          'full_name': studentFullName.text.trim(),
+          'phone_number': studentPhone.text.trim(),
+          'university': university == 'other' ? null : university,
+          'terms_accepted': true,
+        },
+      );
+      if (!mounted) return;
+      if (response.user == null) {
+        throw const AuthException('Registration failed. Please try again.');
+      }
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => RegistrationSuccessPage(
+            emailConfirmationRequired: response.session == null,
+            email: email,
+          ),
+        ),
+      );
+    } on AuthException catch (error) {
+      debugPrint('Student signup AuthException: $error');
+      if (mounted) preview(registrationAuthError(error));
+    } catch (error) {
+      debugPrint('Student registration failed: $error');
+      if (mounted) preview('Could not create your account: $error');
+    } finally {
+      if (mounted) setState(() => isRegistering = false);
+    }
   }
 
   void preview(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String registrationAuthError(AuthException error) {
+    if (error.statusCode == '500' && error.code == 'unexpected_failure') {
+      return 'Supabase could not save the new account. Apply the latest SQL migration in supabase/migrations, then retry.';
+    }
+    final details = <String>[
+      error.message,
+      if (error.code != null) 'code: ${error.code}',
+      if (error.statusCode != null) 'HTTP ${error.statusCode}',
+    ];
+    return details.join(' · ');
   }
 
   Future<void> signIn() async {
@@ -109,6 +178,30 @@ class _AuthPageState extends State<AuthPage> {
           ? profile['full_name'] as String
           : (profile['username'] as String? ?? 'User');
 
+      if (role == 'vendor') {
+        final application = await Supabase.instance.client
+            .from('vendors')
+            .select('status, is_active')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        if (application == null) {
+          await Supabase.instance.client.auth.signOut();
+          if (mounted) {
+            preview('Submit your vendor application before signing in.');
+          }
+          return;
+        }
+        if (application['status'] != 'approved' ||
+            application['is_active'] != true) {
+          await Supabase.instance.client.auth.signOut();
+          if (mounted) {
+            preview(
+                'Your vendor application is being reviewed by an administrator. You can sign in after it is approved.');
+          }
+          return;
+        }
+      }
+
       if (!mounted) return;
 
       // Navigate to respective dashboard
@@ -131,7 +224,19 @@ class _AuthPageState extends State<AuthPage> {
         (route) => false,
       );
     } on AuthException catch (e) {
-      if (mounted) preview(e.message);
+      if (mounted) {
+        final detail = e.message.toLowerCase();
+        if (detail.contains('vendor application was rejected')) {
+          preview(
+              'Your vendor application was rejected. Please contact What2Eat for assistance.');
+        } else if (detail.contains('awaiting administrator approval') ||
+            detail.contains('vendor application is awaiting')) {
+          preview(
+              'Your vendor application is being reviewed by an administrator. You can sign in after it is approved.');
+        } else {
+          preview(e.message);
+        }
+      }
     } catch (e) {
       if (mounted) preview('Sign in failed: ${e.toString()}');
     } finally {
@@ -192,6 +297,14 @@ class _AuthPageState extends State<AuthPage> {
             validator: !customer
                 ? null
                 : switch (label) {
+                    'Full name' => (value) {
+                        final name = (value ?? '').trim();
+                        if (name.isEmpty) return 'Enter your full name.';
+                        if (name.length < 2 || name.length > 100) {
+                          return 'Use 2–100 characters.';
+                        }
+                        return null;
+                      },
                     'Username' => RegistrationValidators.username,
                     'Email address' => RegistrationValidators.email,
                     'Phone number' => RegistrationValidators.phone,
@@ -507,6 +620,41 @@ class _AuthPageState extends State<AuthPage> {
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w800,
+                          ),
+                          TextButton(
+                            onPressed: () => preview(
+                              'Password recovery is not connected in this interface preview.',
+                            ),
+                            child: const Text(
+                              'Forgot password?',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
+                      ),
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD85C),
+                        foregroundColor: const Color(0xFF253729),
+                        minimumSize: const Size.fromHeight(56),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () => preview(
+                        'Interface preview only — ${register ? 'registration' : 'login'} is not connected.',
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            register ? 'Create account' : 'Sign in',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -678,6 +826,32 @@ class _AuthPageState extends State<AuthPage> {
                         Icons.phone_outlined,
                         keyboard: TextInputType.phone,
                       ),
+                      field(
+                        'Full name',
+                        'Enter your full name',
+                        Icons.person_outline,
+                        controller: studentFullName,
+                      ),
+                      field(
+                        'Username',
+                        'Choose a username',
+                        Icons.alternate_email,
+                        controller: studentUsername,
+                      ),
+                      field(
+                        'Email address',
+                        'Enter your email address',
+                        Icons.mail_outline,
+                        keyboard: TextInputType.emailAddress,
+                        controller: studentEmail,
+                      ),
+                      field(
+                        'Phone number',
+                        'e.g. 0123456789',
+                        Icons.phone_outlined,
+                        keyboard: TextInputType.phone,
+                        controller: studentPhone,
+                      ),
                       const Text(
                         'University',
                         style: TextStyle(
@@ -801,6 +975,23 @@ class _AuthPageState extends State<AuthPage> {
                             fontWeight: FontWeight.w800,
                           ),
                         ),
+                        onPressed: pickingPhoto || isRegistering
+                            ? null
+                            : submitCustomerRegistration,
+                        child: isRegistering
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2.5),
+                              )
+                            : const Text(
+                                'Create student account',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                       ),
                     ],
                   ),
@@ -868,6 +1059,44 @@ class _AuthPageState extends State<AuthPage> {
                             builder: (_) => const ForgotPasswordPage(),
                           ),
                         ),
+                        child: const Text('Forgot password?'),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFD85C),
+                        foregroundColor: const Color(0xFF253729),
+                        minimumSize: const Size.fromHeight(56),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: isSigningIn ? null : signIn,
+                      child: isSigningIn
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Color(0xFF253729),
+                              ),
+                            )
+                          : const Text(
+                              'Sign in',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                    ),
+                        onPressed: isSigningIn
+                            ? null
+                            : () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => const ForgotPasswordPage(),
+                                  ),
+                                ),
                         child: const Text('Forgot password?'),
                       ),
                     ),

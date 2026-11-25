@@ -1,0 +1,7 @@
+{
+  "name": "what2eat-profile-backend-checks",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test profile-security.test.mjs" },
+  "devDependencies": { "@electric-sql/pglite": "^0.3.14" }
+}
