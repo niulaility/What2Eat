@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../authentication/auth_page.dart';
 import '../profile/account_page.dart';
 import '../profile/profile_repository.dart';
+import '../../shared/widgets/dashboard_backdrop.dart';
 import 'vendor_application_details_page.dart';
 import 'vendor_application_preview_data.dart';
 import 'admin_accounts_page.dart';
@@ -164,7 +165,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ],
       ),
       body: CustomPaint(
-        painter: _HomeBackdrop(),
+        painter: DashboardBackdrop(),
         child: SizedBox.expand(
           child: SingleChildScrollView(
             controller: _scroll,
@@ -479,37 +480,4 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ),
     ),
   );
-}
-
-class _HomeBackdrop extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = _gold.withValues(alpha: .08);
-    canvas.drawPath(
-      Path()
-        ..moveTo(size.width * .78, 0)
-        ..cubicTo(size.width * .60, 35, size.width * .97, 45, size.width, 125)
-        ..lineTo(size.width, 0)
-        ..close(),
-      paint,
-    );
-    canvas.drawPath(
-      Path()
-        ..moveTo(0, size.height * .65)
-        ..cubicTo(
-          size.width * .13,
-          size.height * .6,
-          size.width * .17,
-          size.height * .9,
-          size.width * .34,
-          size.height,
-        )
-        ..lineTo(0, size.height)
-        ..close(),
-      paint..color = const Color(0xFFEEF1E4).withValues(alpha: .6),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _HomeBackdrop oldDelegate) => false;
 }

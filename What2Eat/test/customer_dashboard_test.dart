@@ -4,6 +4,51 @@ import 'package:what2eat_starter/features/student/customer_dashboard_page.dart';
 import 'package:what2eat_starter/features/student/data/customer_discovery_repository.dart';
 
 void main() {
+  testWidgets('Vendor meal badges match offered sessions and selected date', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CustomerDashboardPage(
+          name: 'Ali',
+          repository: CustomerDiscoveryRepository(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('What2Eat'), findsOneWidget);
+    expect(find.text('Welcome back, Ali! 👋'), findsOneWidget);
+    expect(find.byKey(const ValueKey('customer-navigation')), findsOneWidget);
+    expect(find.byTooltip('Account options'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-lunch')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-dinner')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-breakfast')),
+      findsNothing,
+    );
+    await tester.ensureVisible(find.textContaining('Tomorrow ('));
+    await tester.tap(find.textContaining('Tomorrow ('));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-lunch')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-supper')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('vendor-sample-wok-station-session-dinner')),
+      findsNothing,
+    );
+  });
+
   testWidgets(
     'Customer dashboard supports university filter, search, date grouping, and menu customization',
     (tester) async {
@@ -11,10 +56,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: CustomerDashboardPage(
-            name: 'Ali',
-            repository: repo,
-          ),
+          home: CustomerDashboardPage(name: 'Ali', repository: repo),
         ),
       );
 
@@ -25,10 +67,7 @@ void main() {
       expect(find.text('Wok & Bowl Express'), findsOneWidget);
 
       // Search for a vendor by name
-      await tester.enterText(
-        find.byType(TextField),
-        'Mama Siti',
-      );
+      await tester.enterText(find.byType(TextField), 'Mama Siti');
       await tester.pumpAndSettle();
 
       expect(find.text('Mama Siti Kitchen'), findsOneWidget);

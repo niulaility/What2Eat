@@ -103,6 +103,11 @@ void main() {
       // No Supabase initialization: the dashboard must not load or modify users.
       await openDashboard(tester, width: size.$1, scale: size.$2);
       expect(find.text('Pending vendor applications'), findsOneWidget);
+      expect(find.text('What2Eat'), findsOneWidget);
+      expect(find.byIcon(Icons.ramen_dining_rounded), findsOneWidget);
+      expect(find.byKey(const ValueKey('admin-tab-Home')), findsOneWidget);
+      expect(find.byKey(const ValueKey('admin-tab-Reviews')), findsOneWidget);
+      expect(find.byKey(const ValueKey('admin-tab-Accounts')), findsOneWidget);
       expect(find.byType(Scaffold), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(

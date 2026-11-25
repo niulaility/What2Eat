@@ -2,21 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../authentication/auth_page.dart';
+import '../profile/account_page.dart';
+import '../../shared/widgets/dashboard_backdrop.dart';
 import 'data/customer_discovery_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'vendor_profile_page.dart';
 
 class CustomerDashboardPage extends StatefulWidget {
-  const CustomerDashboardPage({
-    super.key,
-    required this.name,
-    this.repository,
-  });
-import '../profile/account_page.dart';
-
-class CustomerDashboardPage extends StatefulWidget {
-  const CustomerDashboardPage({super.key, required this.name});
+  const CustomerDashboardPage({super.key, required this.name, this.repository});
 
   final String name;
   final CustomerDiscoveryRepository? repository;
@@ -26,6 +20,7 @@ class CustomerDashboardPage extends StatefulWidget {
 }
 
 class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
+  late String _name = widget.name;
   late final CustomerDiscoveryRepository _repository;
   final TextEditingController _searchController = TextEditingController();
 
@@ -78,13 +73,6 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       });
     }
   }
-
-  @override
-  State<CustomerDashboardPage> createState() => _CustomerDashboardPageState();
-}
-
-class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
-  late String _name = widget.name;
 
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -258,10 +246,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     );
   }
 
-  void _openVendorProfile(
-    VendorProfile vendor, {
-    MealSession? initialSession,
-  }) {
+  void _openVendorProfile(VendorProfile vendor, {MealSession? initialSession}) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => VendorProfilePage(
@@ -301,19 +286,47 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
     final selectedUni = _selectedUniversity;
+    final firstName = _name.trim().isEmpty
+        ? 'there'
+        : _name.trim().split(RegExp(r'\s+')).first;
 
     return Scaffold(
       backgroundColor: What2EatTheme.creamBackground,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         backgroundColor: What2EatTheme.creamBackground,
+        surfaceTintColor: Colors.transparent,
+        toolbarHeight: 72,
+        titleSpacing: 16,
         elevation: 0,
-        title: Text(
-          'Welcome, ${widget.name}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800,
-            color: What2EatTheme.darkGreenText,
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: What2EatTheme.goldenYellow,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.ramen_dining_rounded,
+                  size: 28,
+                  color: What2EatTheme.darkGreenText,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Text(
+                'What2Eat',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: What2EatTheme.forestGreen,
+                ),
+              ),
+            ],
           ),
         ),
         actions: [
@@ -367,13 +380,16 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(
-                color: What2EatTheme.forestGreen,
-              ),
-            )
-          : _errorMessage != null
+      body: CustomPaint(
+        painter: DashboardBackdrop(),
+        child: SizedBox.expand(
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: What2EatTheme.forestGreen,
+                  ),
+                )
+              : _errorMessage != null
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
@@ -416,8 +432,38 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                     child: ListView(
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
                       children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 24),
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                const TextSpan(
+                                  text: 'Welcome back, ',
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    color: What2EatTheme.mutedText,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: '$firstName! 👋',
+                                  style: const TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w700,
+                                    color: What2EatTheme.darkGreenText,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 22,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
                         _buildUniversitySelector(selectedUni),
                         const SizedBox(height: 12),
                         _buildSearchField(),
@@ -429,8 +475,86 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                     ),
                   ),
                 ),
+        ),
+      ),
+      bottomNavigationBar: _buildNavigationBar(),
     );
   }
+
+  Widget _buildNavigationBar() => SafeArea(
+    top: false,
+    child: Container(
+      key: const ValueKey('customer-navigation'),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+      decoration: BoxDecoration(
+        color: What2EatTheme.creamBackground,
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: What2EatTheme.darkGreenText, width: .8),
+      ),
+      child: Row(
+        children: [
+          for (final tab in const [
+            (label: 'Home', icon: Icons.home_outlined),
+            (label: 'Explore', icon: Icons.search_rounded),
+            (label: 'Orders', icon: Icons.inventory_2_outlined),
+            (label: 'Messages', icon: Icons.chat_bubble_outline_rounded),
+            (label: 'Settings', icon: Icons.settings_outlined),
+          ])
+            Expanded(
+              child: Semantics(
+                selected: tab.label == 'Home',
+                button: true,
+                enabled: tab.label == 'Home',
+                child: InkWell(
+                  key: ValueKey('customer-tab-${tab.label}'),
+                  onTap: tab.label == 'Home' ? () {} : null,
+                  borderRadius: BorderRadius.circular(18),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: tab.label == 'Home'
+                                ? What2EatTheme.goldenYellow
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            tab.icon,
+                            size: 25,
+                            color: tab.label == 'Home'
+                                ? What2EatTheme.forestGreen
+                                : What2EatTheme.mutedText,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          tab.label,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600,
+                            color: What2EatTheme.darkGreenText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildUniversitySelector(UniversityOption? selectedUni) {
     return InkWell(
@@ -505,10 +629,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       onTapOutside: (_) => FocusScope.of(context).unfocus(),
       decoration: InputDecoration(
         hintText: 'Search vendor',
-        hintStyle: const TextStyle(
-          fontSize: 14,
-          color: What2EatTheme.hintText,
-        ),
+        hintStyle: const TextStyle(fontSize: 14, color: What2EatTheme.hintText),
         prefixIcon: const Icon(
           Icons.search_rounded,
           color: What2EatTheme.forestGreen,
@@ -545,7 +666,8 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   }
 
   Widget _buildMealDateFilter(DateTime today, DateTime tomorrow) {
-    final bool isCustomDate = _selectedDate != null &&
+    final bool isCustomDate =
+        _selectedDate != null &&
         !_isSameDay(_selectedDate!, today) &&
         !_isSameDay(_selectedDate!, tomorrow);
 
@@ -580,7 +702,8 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
               const SizedBox(width: 8),
               _DateFilterChip(
                 label: 'Tomorrow (${_formatDateShort(tomorrow)})',
-                selected: _selectedDate != null &&
+                selected:
+                    _selectedDate != null &&
                     _isSameDay(_selectedDate!, tomorrow),
                 onTap: () => setState(() => _selectedDate = tomorrow),
               ),
@@ -638,7 +761,11 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
         else
           for (final vendor in vendors)
             _VendorDiscoveryCard(
+              key: ValueKey('customer-vendor-${vendor.id}'),
               vendor: vendor,
+              sessions: _selectedDate == null
+                  ? vendor.offeredSessions
+                  : vendor.sessionsForDate(_selectedDate!),
               onTap: () => _openVendorProfile(vendor),
             ),
       ],
@@ -700,20 +827,14 @@ class _DateFilterChip extends StatelessWidget {
           color: selected ? What2EatTheme.goldenYellow : Colors.white,
           borderRadius: BorderRadius.circular(99),
           border: Border.all(
-            color: selected
-                ? What2EatTheme.goldenYellow
-                : What2EatTheme.border,
+            color: selected ? What2EatTheme.goldenYellow : What2EatTheme.border,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              Icon(
-                icon,
-                size: 14,
-                color: What2EatTheme.darkGreenText,
-              ),
+              Icon(icon, size: 14, color: What2EatTheme.darkGreenText),
               const SizedBox(width: 6),
             ],
             Text(
@@ -733,11 +854,14 @@ class _DateFilterChip extends StatelessWidget {
 
 class _VendorDiscoveryCard extends StatelessWidget {
   const _VendorDiscoveryCard({
+    super.key,
     required this.vendor,
+    required this.sessions,
     required this.onTap,
   });
 
   final VendorProfile vendor;
+  final List<MealSession> sessions;
   final VoidCallback onTap;
 
   @override
@@ -829,14 +953,56 @@ class _VendorDiscoveryCard extends StatelessWidget {
                 vendor.businessDescription,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                'Welcome, $_name',
-                textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 13,
                   height: 1.4,
                   color: What2EatTheme.mutedText,
                 ),
               ),
+              if (sessions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final session in (List<MealSession>.of(
+                      sessions,
+                    )..sort((a, b) => a.sortOrder.compareTo(b.sortOrder))))
+                      Container(
+                        key: ValueKey(
+                          'vendor-${vendor.id}-session-${session.id}',
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: What2EatTheme.softSurfaceAlt,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              session.icon,
+                              size: 16,
+                              color: What2EatTheme.forestGreen,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              session.name,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: What2EatTheme.darkGreenText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

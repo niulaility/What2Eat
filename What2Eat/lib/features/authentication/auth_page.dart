@@ -9,7 +9,6 @@ import '../vendor/vendor_dashboard_page.dart';
 import '../admin/admin_dashboard_page.dart';
 
 import 'registration_validators.dart';
-import 'password_reset_page.dart';
 import 'forgot_password_page.dart';
 
 import 'package:image_picker/image_picker.dart';
@@ -620,41 +619,6 @@ class _AuthPageState extends State<AuthPage> {
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w800,
-                          ),
-                          TextButton(
-                            onPressed: () => preview(
-                              'Password recovery is not connected in this interface preview.',
-                            ),
-                            child: const Text(
-                              'Forgot password?',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Icon(Icons.arrow_forward_rounded, size: 20),
-                        ],
-                      ),
-                    const SizedBox(height: 14),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFD85C),
-                        foregroundColor: const Color(0xFF253729),
-                        minimumSize: const Size.fromHeight(56),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () => preview(
-                        'Interface preview only — ${register ? 'registration' : 'login'} is not connected.',
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            register ? 'Create account' : 'Sign in',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -812,20 +776,6 @@ class _AuthPageState extends State<AuthPage> {
                         ),
                       ),
                       const SizedBox(height: 28),
-                      field('Username', 'Choose a username',
-                          Icons.person_outline),
-                      field(
-                        'Email address',
-                        'Enter your email address',
-                        Icons.mail_outline,
-                        keyboard: TextInputType.emailAddress,
-                      ),
-                      field(
-                        'Phone number',
-                        'e.g. 0123456789',
-                        Icons.phone_outlined,
-                        keyboard: TextInputType.phone,
-                      ),
                       field(
                         'Full name',
                         'Enter your full name',
@@ -966,15 +916,6 @@ class _AuthPageState extends State<AuthPage> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed:
-                            pickingPhoto ? null : submitCustomerRegistration,
-                        child: const Text(
-                          'Register',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
                         onPressed: pickingPhoto || isRegistering
                             ? null
                             : submitCustomerRegistration,
@@ -1054,42 +995,6 @@ class _AuthPageState extends State<AuthPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        onPressed: () => Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const ForgotPasswordPage(),
-                          ),
-                        ),
-                        child: const Text('Forgot password?'),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFD85C),
-                        foregroundColor: const Color(0xFF253729),
-                        minimumSize: const Size.fromHeight(56),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: isSigningIn ? null : signIn,
-                      child: isSigningIn
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: Color(0xFF253729),
-                              ),
-                            )
-                          : const Text(
-                              'Sign in',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                    ),
                         onPressed: isSigningIn
                             ? null
                             : () => Navigator.of(context).push(
