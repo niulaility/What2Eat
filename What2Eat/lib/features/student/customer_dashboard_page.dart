@@ -11,6 +11,8 @@ import '../../shared/widgets/dashboard_backdrop.dart';
 import 'data/customer_discovery_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
+import 'vendor_profile_page.dart';
+import 'widgets/menu_status_badge.dart';
 
 class CustomerDashboardPage extends StatefulWidget {
   const CustomerDashboardPage({
@@ -45,8 +47,9 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   Timer? _searchDebounce;
   int _searchRequestToken = 0;
 
-  /// Meal date filter: null shows every vendor for the university.
-  DateTime? _selectedDate;
+  /// Meal date filter. Always set (starts on today) so sessions from different
+  /// dates are never mixed.
+  late DateTime _selectedDate = _today;
 
   /// Published menu sessions per vendor and date; null for offline sample data.
   MenuSessionsByVendor? _menuSessions;
@@ -122,38 +125,30 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
         ? _searchResults!
         : _allVendors;
 
-    final date = _selectedDate;
     return source.where((vendor) {
       if (!vendor.universityIds.contains(uniId)) return false;
       if (query.isNotEmpty &&
           !vendor.businessName.toLowerCase().contains(query)) {
         return false;
       }
-      if (date != null && _sessionsFor(vendor).isEmpty) return false;
-      return true;
+      // Only vendors with a published menu on the selected date.
+      final menus = _menusFor(vendor);
+      return menus != null
+          ? menus.isNotEmpty
+          : vendor.sessionsForDate(_selectedDate).isNotEmpty; // offline
     }).toList();
   }
 
-  /// Meal sessions the vendor has published menus for: on [_selectedDate], or
-  /// across all upcoming dates when no date is selected.
-  List<MealSession> _sessionsFor(VendorProfile vendor) {
-    final date = _selectedDate;
+  /// All of the vendor's published menus on [_selectedDate] (open, not open
+  /// yet, or closed), in Breakfast → Supper order. `null` for offline sample
+  /// data.
+  List<MenuSessionWindow>? _menusFor(VendorProfile vendor) {
     final menus = _menuSessions;
-    if (menus == null) {
-      // Offline sample data.
-      return date == null
-          ? vendor.offeredSessions
-          : vendor.sessionsForDate(date);
-    }
-    final byDate = menus[vendor.id] ?? const {};
-    final ids = date == null
-        ? {for (final sessions in byDate.values) ...sessions}
-        : byDate[VendorProfile.formatIsoDate(date)] ?? const <String>{};
+    if (menus == null) return null;
     return [
-      for (final id in ids)
-        if (CustomerDiscoveryRepository.sessionsById[id] != null)
-          CustomerDiscoveryRepository.sessionsById[id]!,
-    ]..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+      for (final menu in menus[vendor.id] ?? const <MenuSessionWindow>[])
+        if (_isSameDay(menu.menuDate, _selectedDate)) menu,
+    ]..sort((a, b) => a.session.sortOrder.compareTo(b.session.sortOrder));
   }
 
   DateTime get _today {
@@ -182,20 +177,27 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     return '${date.day} ${months[date.month - 1]}';
   }
 
-  /// Selects [date], or clears the filter when the same date is tapped again.
-  void _selectDate(DateTime date) {
-    setState(() {
-      _selectedDate = _selectedDate != null && _isSameDay(_selectedDate!, date)
-          ? null
-          : date;
-    });
+  void _openVendorProfile(VendorProfile vendor) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => VendorProfilePage(
+          vendor: vendor,
+          universities: _universities,
+          initialDate: _selectedDate,
+          menus: _menusFor(vendor),
+          messagingRepository: widget.messagingRepository,
+        ),
+      ),
+    );
   }
+
+  void _selectDate(DateTime date) => setState(() => _selectedDate = date);
 
   Future<void> _pickMealDate() async {
     final today = _today;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate ?? today,
+      initialDate: _selectedDate.isBefore(today) ? today : _selectedDate,
       firstDate: today,
       lastDate: today.add(
         const Duration(days: CustomerDiscoveryRepository.menuDaysAhead),
@@ -798,9 +800,9 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     final today = _today;
     final tomorrow = today.add(const Duration(days: 1));
     final selected = _selectedDate;
-    final isToday = selected != null && _isSameDay(selected, today);
-    final isTomorrow = selected != null && _isSameDay(selected, tomorrow);
-    final isCustom = selected != null && !isToday && !isTomorrow;
+    final isToday = _isSameDay(selected, today);
+    final isTomorrow = _isSameDay(selected, tomorrow);
+    final isCustom = !isToday && !isTomorrow;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -838,7 +840,6 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                 icon: Icons.calendar_today_outlined,
                 selected: isCustom,
                 onTap: _pickMealDate,
-                onClear: isCustom ? () => _selectDate(selected) : null,
               ),
             ],
           ),
@@ -881,18 +882,17 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
             _selectedUniversityId == null
                 ? 'Select your university to see vendors that deliver to your campus.'
                 : _searchQuery.trim().isNotEmpty
-                ? 'No approved vendors at this university match "${_searchQuery.trim()}"${_selectedDate == null ? '' : ' on ${_formatDateShort(_selectedDate!)}'}.'
-                : _selectedDate != null
-                ? 'No vendors have a menu on ${_formatDateShort(_selectedDate!)}. Try another date.'
-                : 'No approved vendors deliver to this university yet.',
+                ? 'No vendors at this university match "${_searchQuery.trim()}" with a menu on ${_formatDateShort(_selectedDate)}.'
+                : 'No vendors have a menu on ${_formatDateShort(_selectedDate)}. Try another date.',
           )
         else
           for (final vendor in vendors)
             _VendorDiscoveryCard(
               key: ValueKey('customer-vendor-${vendor.id}'),
               vendor: vendor,
-              sessions: _sessionsFor(vendor),
-              hasDate: _selectedDate != null,
+              menus: _menusFor(vendor),
+              sampleSessions: vendor.sessionsForDate(_selectedDate),
+              onTap: () => _openVendorProfile(vendor),
             ),
       ],
     );
@@ -929,140 +929,153 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   }
 }
 
-/// Display-only vendor summary. Opening a vendor (profile, sessions, menus) is
-/// not wired yet.
+/// Vendor summary card; tapping opens the vendor profile.
 class _VendorDiscoveryCard extends StatelessWidget {
   const _VendorDiscoveryCard({
     super.key,
     required this.vendor,
-    required this.sessions,
-    required this.hasDate,
+    required this.menus,
+    required this.sampleSessions,
+    required this.onTap,
   });
 
   final VendorProfile vendor;
 
-  /// Meal sessions with a published menu (display only, not tappable).
-  final List<MealSession> sessions;
-  final bool hasDate;
+  /// The vendor's published menus on the selected date, each shown with its
+  /// ordering status. `null` for offline sample data ([sampleSessions]).
+  final List<MenuSessionWindow>? menus;
+  final List<MealSession> sampleSessions;
+
+  /// Opens the vendor profile.
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: What2EatTheme.border),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: What2EatTheme.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(onTap: onTap, child: _buildContent()),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(15),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: What2EatTheme.softSurfaceAlt,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: vendor.logoUrl?.isNotEmpty == true
-                      ? Image.network(
-                          vendor.logoUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) =>
-                              const _VendorLogoFallback(),
-                        )
-                      : const _VendorLogoFallback(),
+    );
+  }
+
+  Widget _buildContent() {
+    return Padding(
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: What2EatTheme.softSurfaceAlt,
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          vendor.businessName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: What2EatTheme.darkGreenText,
-                          ),
+                child: vendor.logoUrl?.isNotEmpty == true
+                    ? Image.network(
+                        vendor.logoUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const _VendorLogoFallback(),
+                      )
+                    : const _VendorLogoFallback(),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        vendor.businessName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: What2EatTheme.darkGreenText,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              vendor.businessDescription,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: What2EatTheme.mutedText,
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (sessions.isEmpty)
-              Text(
-                hasDate ? 'No menu on this date' : 'No upcoming menus yet',
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontStyle: FontStyle.italic,
-                  color: What2EatTheme.subtleText,
-                ),
-              )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final session in sessions)
-                    Container(
-                      key: ValueKey(
-                        'vendor-${vendor.id}-session-${session.id}',
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: What2EatTheme.softSurfaceAlt,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            session.icon,
-                            size: 16,
-                            color: What2EatTheme.forestGreen,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            session.name,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: What2EatTheme.darkGreenText,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                ],
+                  ],
+                ),
               ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            vendor.businessDescription,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: What2EatTheme.mutedText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: menus == null
+                ? [
+                    for (final session in sampleSessions)
+                      _sessionChip(session: session, status: null),
+                  ]
+                : [
+                    for (final menu in menus!)
+                      _sessionChip(
+                        session: menu.session,
+                        status: menu.statusAt(DateTime.now()),
+                      ),
+                  ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Display-only chip: session name plus its ordering status.
+  Widget _sessionChip({
+    required MealSession session,
+    required MenuOrderStatus? status,
+  }) {
+    final colors = status == null ? null : menuStatusColors(status);
+    final dimmed = status != null && status != MenuOrderStatus.open;
+    return Container(
+      key: ValueKey('vendor-${vendor.id}-session-${session.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors?.background ?? What2EatTheme.softSurfaceAlt,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            session.icon,
+            size: 16,
+            color: dimmed ? colors!.foreground : What2EatTheme.forestGreen,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            status == null ? session.name : '${session.name} · ${status.label}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: colors?.foreground ?? What2EatTheme.darkGreenText,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1075,7 +1088,6 @@ class _DateFilterChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.icon,
-    this.onClear,
   });
 
   final String label;
@@ -1083,16 +1095,13 @@ class _DateFilterChip extends StatelessWidget {
   final VoidCallback onTap;
   final IconData? icon;
 
-  /// Shows a trailing ✕ that clears the date filter.
-  final VoidCallback? onClear;
-
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(99),
       child: Container(
-        padding: EdgeInsets.fromLTRB(13, 8, onClear == null ? 13 : 6, 8),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? What2EatTheme.goldenYellow : Colors.white,
           borderRadius: BorderRadius.circular(99),
@@ -1115,22 +1124,6 @@ class _DateFilterChip extends StatelessWidget {
                 color: What2EatTheme.darkGreenText,
               ),
             ),
-            if (onClear != null) ...[
-              const SizedBox(width: 4),
-              InkWell(
-                onTap: onClear,
-                customBorder: const CircleBorder(),
-                child: const Padding(
-                  padding: EdgeInsets.all(2),
-                  child: Icon(
-                    Icons.close_rounded,
-                    size: 16,
-                    semanticLabel: 'Clear date',
-                    color: What2EatTheme.darkGreenText,
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),

@@ -51,6 +51,45 @@ class MealSession {
   int get hashCode => id.hashCode;
 }
 
+/// Where "now" falls relative to a menu's ordering window.
+enum MenuOrderStatus {
+  notOpenYet('Not open yet'),
+  open('Open'),
+  closed('Closed');
+
+  const MenuOrderStatus(this.label);
+  final String label;
+}
+
+/// One published vendor menu (`public.menus`) and its ordering window.
+class MenuSessionWindow {
+  const MenuSessionWindow({
+    required this.menuId,
+    required this.session,
+    required this.menuDate,
+    required this.orderOpeningAt,
+    required this.orderClosingAt,
+  });
+
+  final String menuId;
+  final MealSession session;
+
+  /// Local calendar date of the meal (`menu_date`).
+  final DateTime menuDate;
+
+  /// Ordering window, in local time.
+  final DateTime orderOpeningAt, orderClosingAt;
+
+  MenuOrderStatus statusAt(DateTime now) => now.isBefore(orderOpeningAt)
+      ? MenuOrderStatus.notOpenYet
+      : now.isBefore(orderClosingAt)
+      ? MenuOrderStatus.open
+      : MenuOrderStatus.closed;
+
+  /// Only menus inside their ordering window can be opened and ordered from.
+  bool isOpenAt(DateTime now) => statusAt(now) == MenuOrderStatus.open;
+}
+
 class CustomizationOption {
   const CustomizationOption({
     required this.id,
@@ -151,7 +190,9 @@ class VendorProfile {
 
   List<MenuItem> menuForSession(String sessionId) {
     return menuItems
-        .where((item) => item.isAvailable && item.sessionIds.contains(sessionId))
+        .where(
+          (item) => item.isAvailable && item.sessionIds.contains(sessionId),
+        )
         .toList();
   }
 

@@ -3,8 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/customer_discovery_models.dart';
 
-/// vendor ID → ISO date (`yyyy-MM-dd`) → meal session IDs with a published menu.
-typedef MenuSessionsByVendor = Map<String, Map<String, Set<String>>>;
+/// vendor ID → its published menus from today to `menuDaysAhead` days ahead.
+typedef MenuSessionsByVendor = Map<String, List<MenuSessionWindow>>;
 
 class CustomerDiscoveryData {
   const CustomerDiscoveryData({
@@ -18,8 +18,8 @@ class CustomerDiscoveryData {
   final List<VendorProfile> vendors;
   final String? defaultUniversityId;
 
-  /// Published menu sessions from today to [CustomerDiscoveryRepository
-  /// .menuDaysAhead] days ahead. `null` for offline sample data.
+  /// Published upcoming menus with their ordering windows. `null` for offline
+  /// sample data.
   final MenuSessionsByVendor? menuSessions;
 }
 
@@ -156,14 +156,17 @@ class CustomerDiscoveryRepository {
     );
   }
 
-  /// Published menus from today to [menuDaysAhead] days ahead, grouped by
-  /// vendor and date (`public.menus`, readable by customers when published).
+  /// Published menus dated today to [menuDaysAhead] days ahead, with their
+  /// ordering windows (open / not open yet / closed is decided on display),
+  /// grouped by vendor and sorted by meal date then session.
   Future<MenuSessionsByVendor> _loadMenuSessions(SupabaseClient client) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final rows = await client
         .from('menus')
-        .select('vendor_id, menu_date, meal_session')
+        .select(
+          'id, vendor_id, menu_date, meal_session, order_opening_at, order_closing_at',
+        )
         .eq('is_published', true)
         .gte('menu_date', VendorProfile.formatIsoDate(today))
         .lte(
@@ -174,13 +177,30 @@ class CustomerDiscoveryRepository {
         );
     final MenuSessionsByVendor result = {};
     for (final row in rows) {
-      final vendorId = row['vendor_id'] as String;
-      final date = row['menu_date'] as String;
-      final session = row['meal_session'] as String;
+      final session = sessionsById[row['meal_session'] as String];
+      if (session == null) continue;
+      final date = DateTime.parse(row['menu_date'] as String);
       result
-          .putIfAbsent(vendorId, () => {})
-          .putIfAbsent(date, () => <String>{})
-          .add(session);
+          .putIfAbsent(row['vendor_id'] as String, () => [])
+          .add(
+            MenuSessionWindow(
+              menuId: row['id'] as String,
+              session: session,
+              menuDate: DateTime(date.year, date.month, date.day),
+              orderOpeningAt: DateTime.parse(row['order_opening_at'] as String)
+                  .toLocal(),
+              orderClosingAt: DateTime.parse(row['order_closing_at'] as String)
+                  .toLocal(),
+            ),
+          );
+    }
+    for (final menus in result.values) {
+      menus.sort((a, b) {
+        final byDate = a.menuDate.compareTo(b.menuDate);
+        return byDate != 0
+            ? byDate
+            : a.session.sortOrder.compareTo(b.session.sortOrder);
+      });
     }
     return result;
   }
