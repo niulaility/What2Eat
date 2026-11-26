@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../authentication/university_directory.dart';
 import 'user_profile.dart';
 
 abstract class ProfileRepository {
@@ -42,6 +43,7 @@ class SupabaseProfileRepository implements ProfileRepository {
         .eq('id', user.id)
         .single();
     String? universityId;
+    var servedUniversityIds = const <String>[];
     if (row['role'] == 'student') {
       final customer = await client
           .from('customers')
@@ -49,12 +51,30 @@ class SupabaseProfileRepository implements ProfileRepository {
           .eq('user_id', user.id)
           .maybeSingle();
       universityId = customer?['university_id'] as String?;
+    } else if (row['role'] == 'vendor') {
+      servedUniversityIds = await _servedUniversityIds(user.id);
     }
-    return UserProfile.fromJson({
-      ...row,
-      'university_id': universityId,
-    }, email: user.email);
+    return UserProfile.fromJson(
+      {...row, 'university_id': universityId},
+      email: user.email,
+      servedUniversityIds: servedUniversityIds,
+    );
   });
+
+  /// The vendor's linked university IDs ("Other university" is a regular row).
+  Future<List<String>> _servedUniversityIds(String userId) async {
+    final vendor = await client
+        .from('vendors')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (vendor == null) return const [];
+    final rows = await client
+        .from('vendor_universities')
+        .select('university_id')
+        .eq('vendor_id', vendor['id'] as String);
+    return rows.map((row) => row['university_id'] as String).toList();
+  }
 
   @override
   Future<List<UniversityChoice>> universities() => _guard(() async {
@@ -63,15 +83,17 @@ class SupabaseProfileRepository implements ProfileRepository {
         .select('id, code, name')
         .eq('is_active', true)
         .order('name');
-    return rows
-        .map(
-          (row) => UniversityChoice(
-            row['id'] as String,
-            row['name'] as String,
-            row['code'] as String? ?? '',
-          ),
-        )
-        .toList();
+    return sortUniversityChoices(
+      rows
+          .map(
+            (row) => UniversityChoice(
+              row['id'] as String,
+              row['name'] as String,
+              row['code'] as String? ?? '',
+            ),
+          )
+          .toList(),
+    );
   });
 
   /// Never fetch external avatar URLs or another user's storage folder.
@@ -166,6 +188,17 @@ class SupabaseProfileRepository implements ProfileRepository {
         'Your signed-in account changed. Reopen your profile.',
       );
     }
+    // Universities first: the profile RPC's change check would reject a retry
+    // if the profile were saved before a university update failed.
+    if (changes.servedUniversityIds != null) {
+      // Atomic replace of vendor_universities (migration 20261127000030).
+      await client.rpc(
+        'update_my_served_universities',
+        params: {
+          'p_university_ids': changes.servedUniversityIds!.toSet().toList(),
+        },
+      );
+    }
     final result = await client.rpc(
       'update_my_personal_profile',
       params: {
@@ -182,7 +215,13 @@ class SupabaseProfileRepository implements ProfileRepository {
         'Your signed-in account changed. Reopen your profile.',
       );
     }
-    return UserProfile.fromJson(Map<String, dynamic>.from(result as Map));
+    final row = Map<String, dynamic>.from(result as Map);
+    return UserProfile.fromJson(
+      row,
+      servedUniversityIds: row['role'] == 'vendor'
+          ? await _servedUniversityIds(userId)
+          : const [],
+    );
   });
 
   Future<T> _guard<T>(Future<T> Function() action) async {

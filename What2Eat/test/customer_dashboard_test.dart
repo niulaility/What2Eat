@@ -4,7 +4,7 @@ import 'package:what2eat_starter/features/student/customer_dashboard_page.dart';
 import 'package:what2eat_starter/features/student/data/customer_discovery_repository.dart';
 
 void main() {
-  testWidgets('Vendor meal badges match offered sessions and selected date', (
+  testWidgets('Only vendors serving the selected university are listed', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -20,37 +20,39 @@ void main() {
     expect(find.text('Welcome back, Ali! 👋'), findsOneWidget);
     expect(find.byKey(const ValueKey('customer-navigation')), findsOneWidget);
     expect(find.byTooltip('Account options'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-lunch')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-dinner')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-breakfast')),
-      findsNothing,
-    );
-    await tester.ensureVisible(find.textContaining('Tomorrow ('));
-    await tester.tap(find.textContaining('Tomorrow ('));
+    expect(find.text('Meal Date'), findsNothing);
+
+    // Default university is UTM: Warung Kopi does not serve UTM.
+    expect(find.text('3 found'), findsOneWidget);
+    expect(find.text('Mama Siti Kitchen'), findsOneWidget);
+    expect(find.text('Wok & Bowl Express'), findsOneWidget);
+    expect(find.text('Warung Kopi & Roti'), findsNothing);
+
+    // Switch to UM: Wok & Bowl Express does not serve UM.
+    await tester.tap(find.text('UTM • Universiti Teknologi Malaysia'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Universiti Malaya'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wok & Bowl Express'), findsNothing);
+    expect(find.text('Mama Siti Kitchen'), findsOneWidget);
+    expect(find.text('Warung Kopi & Roti'), findsOneWidget);
+
+    // "Other / not listed" has no campus, so no vendors are shown.
+    await tester.tap(find.text('UM • Universiti Malaya'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Other / not listed'));
+    await tester.pumpAndSettle();
+    expect(find.text('0 found'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-lunch')),
+      find.text(
+        'Select your university to see vendors that deliver to your campus.',
+      ),
       findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-supper')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('vendor-sample-wok-station-session-dinner')),
-      findsNothing,
     );
   });
 
   testWidgets(
-    'Customer dashboard supports university filter, search, date grouping, and menu customization',
+    'Customer dashboard supports university filter, search, and menu customization',
     (tester) async {
       final repo = CustomerDiscoveryRepository();
 
@@ -76,12 +78,6 @@ void main() {
       // Clear search
       await tester.enterText(find.byType(TextField), '');
       await tester.pumpAndSettle();
-
-      // Select Today meal date -> filters vendors available on that date
-      await tester.tap(find.textContaining('Today ('));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Mama Siti Kitchen'), findsOneWidget);
 
       // Tap Mama Siti Kitchen -> opens vendor profile where meal sessions are shown vertically
       await tester.tap(find.text('Mama Siti Kitchen'));

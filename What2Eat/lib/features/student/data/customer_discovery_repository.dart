@@ -65,72 +65,75 @@ class CustomerDiscoveryRepository {
     sortOrder: 4,
   );
 
+  /// Loads active universities and every approved, active vendor that serves
+  /// at least one university. Sample data is used only when Supabase is not
+  /// initialized (offline widget tests); real query failures are rethrown so
+  /// the dashboard shows an error instead of fake vendors.
   Future<CustomerDiscoveryData> loadDiscoveryData() async {
     final client = _supabase;
     if (client == null) {
       return _buildFallbackData();
     }
 
-    try {
-      final uniRows = await client
-          .from('universities')
-          .select('id, code, name, state')
-          .eq('is_active', true)
-          .order('name');
+    final uniRows = await client
+        .from('universities')
+        .select('id, code, name, state')
+        .eq('is_active', true)
+        .order('name');
 
-      final universities = (uniRows as List<dynamic>)
-          .map((e) => UniversityOption.fromMap(Map<String, dynamic>.from(e)))
-          .toList();
+    // "Other university" (code 'other') is a regular row, listed last.
+    final universities =
+        (uniRows as List<dynamic>)
+            .map((e) => UniversityOption.fromMap(Map<String, dynamic>.from(e)))
+            .toList()
+          ..sort((a, b) {
+            final aOther = a.code == 'other', bOther = b.code == 'other';
+            if (aOther != bOther) return aOther ? 1 : -1;
+            return a.name.compareTo(b.name);
+          });
 
-      if (universities.isEmpty) {
-        return _buildFallbackData();
-      }
-
-      String? defaultUniId;
-      var hasCustomerRow = false;
-      final currentUser = client.auth.currentUser;
-      if (currentUser != null) {
-        try {
-          final customerRow = await client
-              .from('customers')
-              .select('university_id')
-              .eq('user_id', currentUser.id)
-              .maybeSingle();
-          if (customerRow != null) {
-            hasCustomerRow = true;
-            defaultUniId = customerRow['university_id']?.toString();
-          }
-        } catch (_) {
-          // Non-customer accounts (e.g., admin previewing) may not have a customer row.
+    String? defaultUniId;
+    var hasCustomerRow = false;
+    final currentUser = client.auth.currentUser;
+    if (currentUser != null) {
+      try {
+        final customerRow = await client
+            .from('customers')
+            .select('university_id')
+            .eq('user_id', currentUser.id)
+            .maybeSingle();
+        if (customerRow != null) {
+          hasCustomerRow = true;
+          defaultUniId = customerRow['university_id']?.toString();
         }
+      } catch (_) {
+        // Non-customer accounts (e.g., admin previewing) may not have a customer row.
       }
-
-      final vendorRows = await client
-          .from('vendors')
-          .select(
-            'id, business_name, business_description, business_contact_number, business_address, logo_url, status, is_active',
-          )
-          .eq('status', 'approved')
-          .eq('is_active', true)
-          .order('business_name');
-
-      final liveVendors = await _mapVendorRows(
-        client: client,
-        vendorRows: vendorRows as List<dynamic>,
-      );
-
-      if (!hasCustomerRow) {
-        defaultUniId ??= universities.first.id;
-      }
-
-      return CustomerDiscoveryData(
-        universities: universities,
-        vendors: liveVendors,
-        defaultUniversityId: defaultUniId,
-      );
-    } catch (_) {
-      return _buildFallbackData();
     }
+
+    final vendorRows = await client
+        .from('vendors')
+        .select(
+          'id, business_name, business_description, business_contact_number, business_address, logo_url, status, is_active',
+        )
+        .eq('status', 'approved')
+        .eq('is_active', true)
+        .order('business_name');
+
+    final liveVendors = await _mapVendorRows(
+      client: client,
+      vendorRows: vendorRows as List<dynamic>,
+    );
+
+    if (!hasCustomerRow && universities.isNotEmpty) {
+      defaultUniId ??= universities.first.id;
+    }
+
+    return CustomerDiscoveryData(
+      universities: universities,
+      vendors: liveVendors,
+      defaultUniversityId: defaultUniId,
+    );
   }
 
   /// Searches approved active vendors in Supabase, restricted to [universityId]
@@ -220,19 +223,16 @@ class CustomerDiscoveryRepository {
   }
 
   /// Persists the student's selected university to `public.customers`.
-  /// Passing `null` stores "Other / not listed".
+  /// "Other university" is a regular university row.
   Future<void> updateSelectedUniversity(String? universityId) async {
     final client = _supabase;
     final currentUser = client?.auth.currentUser;
     if (client == null || currentUser == null) return;
 
-    await client.from('customers').upsert(
-      {
-        'user_id': currentUser.id,
-        'university_id': universityId,
-      },
-      onConflict: 'user_id',
-    );
+    await client.from('customers').upsert({
+      'user_id': currentUser.id,
+      'university_id': universityId,
+    }, onConflict: 'user_id');
   }
 
   VendorProfile _enrichLiveVendor({
@@ -256,12 +256,11 @@ class CustomerDiscoveryRepository {
         : const [lunchSession, dinnerSession];
 
     final datesMap = <String, List<String>>{
-      VendorProfile.formatIsoDate(today):
-          sessions.map((s) => s.id).toList(),
-      VendorProfile.formatIsoDate(tomorrow):
-          isMamaSiti ? ['breakfast', 'lunch'] : ['lunch', 'dinner'],
-      VendorProfile.formatIsoDate(dayAfter):
-          sessions.map((s) => s.id).toList(),
+      VendorProfile.formatIsoDate(today): sessions.map((s) => s.id).toList(),
+      VendorProfile.formatIsoDate(tomorrow): isMamaSiti
+          ? ['breakfast', 'lunch']
+          : ['lunch', 'dinner'],
+      VendorProfile.formatIsoDate(dayAfter): sessions.map((s) => s.id).toList(),
     };
 
     return VendorProfile(
@@ -279,23 +278,6 @@ class CustomerDiscoveryRepository {
       prepTimeLabel: '15–25 mins',
       cuisineTag: isMamaSiti ? 'Malay Home-Cooked' : 'Campus Kitchen',
     );
-  }
-
-  List<VendorProfile> _mergeWithSampleCampusVendors({
-    required List<VendorProfile> liveVendors,
-    required List<UniversityOption> universities,
-  }) {
-    final existingNames =
-        liveVendors.map((v) => v.businessName.toLowerCase()).toSet();
-    final samples = _sampleVendorsForUniversities(universities);
-
-    final merged = <VendorProfile>[...liveVendors];
-    for (final sample in samples) {
-      if (!existingNames.contains(sample.businessName.toLowerCase())) {
-        merged.add(sample);
-      }
-    }
-    return merged;
   }
 
   CustomerDiscoveryData _buildFallbackData() {
@@ -341,8 +323,7 @@ class CustomerDiscoveryRepository {
     final mamaSiti = _enrichLiveVendor(
       id: 'vendor-mama-siti',
       businessName: 'Mama Siti Kitchen',
-      businessDescription:
-          'Authentic homemade Malay dishes and packed lunch delivery for campus students.',
+      businessDescription: 'Authentic homemade Malay dishes and packed lunch delivery for campus students.',
       businessContactNumber: '0198765432',
       businessAddress: 'No. 12, Jalan Universiti, 81300 Skudai, Johor',
       logoUrl: null,
@@ -390,8 +371,7 @@ class CustomerDiscoveryRepository {
       VendorProfile(
         id: 'sample-wok-station',
         businessName: 'Wok & Bowl Express',
-        businessDescription:
-            'Freshly stir-fried rice bowls, handmade dumplings, and Thai-style basil chicken prepared to order.',
+        businessDescription: 'Freshly stir-fried rice bowls, handmade dumplings, and Thai-style basil chicken prepared to order.',
         businessContactNumber: '0174458821',
         businessAddress: 'Blok B-04, Arked Meranti, 81310 Skudai, Johor',
         universityIds: nonNull([utmId, upmId, ukmId]),
@@ -409,8 +389,7 @@ class CustomerDiscoveryRepository {
       VendorProfile(
         id: 'sample-green-bento',
         businessName: 'The Green Bento Co.',
-        businessDescription:
-            'Balanced high-protein meal boxes, grilled chicken salads, and cold-pressed juices for busy study days.',
+        businessDescription: 'Balanced high-protein meal boxes, grilled chicken salads, and cold-pressed juices for busy study days.',
         businessContactNumber: '0129934120',
         businessAddress: 'Suite 3, Pusat Komersial Pelajar, Kuala Lumpur',
         universityIds: nonNull([utmId, umId, usmId, uitmId]),
@@ -428,8 +407,7 @@ class CustomerDiscoveryRepository {
       VendorProfile(
         id: 'sample-warung-kopi',
         businessName: 'Warung Kopi & Roti',
-        businessDescription:
-            'Crispy roti canai, kaya toast sets, nasi lemak bungkus, and iced kopi kaw for early lectures and late-night cramming.',
+        businessDescription: 'Crispy roti canai, kaya toast sets, nasi lemak bungkus, and iced kopi kaw for early lectures and late-night cramming.',
         businessContactNumber: '0136679012',
         businessAddress: 'No. 8, Medan Selera Siswa, 43400 Serdang, Selangor',
         universityIds: nonNull([umId, upmId, ukmId, uitmId, usmId]),
@@ -454,8 +432,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['breakfast', 'lunch'],
         name: 'Nasi Lemak Ayam Berempah',
-        description:
-            'Fragrant coconut rice served with crispy spiced fried chicken, house-made sambal, toasted anchovies, peanuts, cucumber, and boiled egg.',
+        description: 'Fragrant coconut rice served with crispy spiced fried chicken, house-made sambal, toasted anchovies, peanuts, cucumber, and boiled egg.',
         price: 9.50,
         category: 'Rice & Mains',
         customizationGroups: const [
@@ -509,8 +486,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['breakfast'],
         name: 'Lontong Kuah Lodeh',
-        description:
-            'Compressed rice cakes in rich turmeric coconut vegetable gravy with tempeh, tofu, and sambal tumis.',
+        description: 'Compressed rice cakes in rich turmeric coconut vegetable gravy with tempeh, tofu, and sambal tumis.',
         price: 7.00,
         category: 'Breakfast',
         customizationGroups: const [
@@ -539,8 +515,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['lunch', 'dinner'],
         name: 'Nasi Tomato Ayam Masak Merah',
-        description:
-            'Aromatic tomato-infused rice paired with tender chicken simmered in sweet-spicy chili tomato gravy and acar jelatah.',
+        description: 'Aromatic tomato-infused rice paired with tender chicken simmered in sweet-spicy chili tomato gravy and acar jelatah.',
         price: 10.90,
         category: 'Rice & Mains',
         customizationGroups: const [
@@ -587,8 +562,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['dinner'],
         name: 'Set Ikan Keli Bakar & Air Asam',
-        description:
-            'Char-grilled catfish marinated in turmeric and lemongrass, served with steamed white rice, ulam, and tangy air asam dip.',
+        description: 'Char-grilled catfish marinated in turmeric and lemongrass, served with steamed white rice, ulam, and tangy air asam dip.',
         price: 11.50,
         category: 'Rice & Mains',
         customizationGroups: const [
@@ -618,8 +592,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['breakfast', 'lunch', 'dinner'],
         name: 'Kopi Kampung Ais / Teh Tarik',
-        description:
-            'Freshly brewed Malaysian kopitiam-style coffee or pulled milk tea.',
+        description: 'Freshly brewed Malaysian kopitiam-style coffee or pulled milk tea.',
         price: 3.20,
         category: 'Drinks',
         customizationGroups: const [
@@ -635,7 +608,11 @@ class CustomerDiscoveryRepository {
                 isDefault: true,
               ),
               CustomizationOption(id: 'kopi-ais', name: 'Kopi Kampung Ais'),
-              CustomizationOption(id: 'milo-ais', name: 'Milo Ais', priceDelta: 0.80),
+              CustomizationOption(
+                id: 'milo-ais',
+                name: 'Milo Ais',
+                priceDelta: 0.80,
+              ),
             ],
           ),
           CustomizationGroup(
@@ -649,7 +626,10 @@ class CustomerDiscoveryRepository {
                 name: 'Normal Sugar',
                 isDefault: true,
               ),
-              CustomizationOption(id: 'kurang-manis', name: 'Kurang Manis (Less Sweet)'),
+              CustomizationOption(
+                id: 'kurang-manis',
+                name: 'Kurang Manis (Less Sweet)',
+              ),
             ],
           ),
         ],
@@ -664,8 +644,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['lunch', 'dinner', 'supper'],
         name: 'Thai Basil Chicken Rice Bowl',
-        description:
-            'Wok-seared minced chicken with holy basil, garlic, chili padi, and jasmine rice topped with a crispy-edged fried egg.',
+        description: 'Wok-seared minced chicken with holy basil, garlic, chili padi, and jasmine rice topped with a crispy-edged fried egg.',
         price: 10.50,
         category: 'Rice Bowls',
         customizationGroups: const [
@@ -714,8 +693,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['lunch', 'dinner', 'supper'],
         name: 'Salted Egg Buttermilk Chicken Rice',
-        description:
-            'Crispy popcorn chicken tossed in creamy curry-leaf buttermilk salted egg sauce over steamed rice.',
+        description: 'Crispy popcorn chicken tossed in creamy curry-leaf buttermilk salted egg sauce over steamed rice.',
         price: 11.90,
         category: 'Rice Bowls',
         customizationGroups: const [
@@ -744,8 +722,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['dinner', 'supper'],
         name: 'Chili Oil Dumpling Noodles',
-        description:
-            'Springy egg noodles tossed in fragrant soy-chili oil with 5 handmade chicken & chive dumplings.',
+        description: 'Springy egg noodles tossed in fragrant soy-chili oil with 5 handmade chicken & chive dumplings.',
         price: 9.80,
         category: 'Noodles',
         customizationGroups: const [
@@ -775,8 +752,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['breakfast'],
         name: 'Matcha Chia Overnight Oats',
-        description:
-            'Rolled oats soaked in oat milk with ceremonial matcha, chia seeds, sliced banana, and toasted almonds.',
+        description: 'Rolled oats soaked in oat milk with ceremonial matcha, chia seeds, sliced banana, and toasted almonds.',
         price: 8.90,
         category: 'Breakfast',
         customizationGroups: const [
@@ -819,8 +795,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['lunch', 'dinner'],
         name: 'Grilled Teriyaki Chicken Bento',
-        description:
-            'Char-grilled boneless chicken thigh glazed in house teriyaki, served with Japanese short-grain rice, edamame, tamagoyaki, and sesame salad.',
+        description: 'Char-grilled boneless chicken thigh glazed in house teriyaki, served with Japanese short-grain rice, edamame, tamagoyaki, and sesame salad.',
         price: 13.50,
         category: 'Bento Boxes',
         customizationGroups: const [
@@ -876,8 +851,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['breakfast', 'supper'],
         name: 'Roti Canai Banjir & Telur Goyang',
-        description:
-            'Two flaky hand-tossed roti canai drenched in dhal & chicken curry with two soft-boiled kampung eggs.',
+        description: 'Two flaky hand-tossed roti canai drenched in dhal & chicken curry with two soft-boiled kampung eggs.',
         price: 6.50,
         category: 'Breakfast & Supper',
         customizationGroups: const [
@@ -923,8 +897,7 @@ class CustomerDiscoveryRepository {
         vendorId: vendorId,
         sessionIds: const ['supper'],
         name: 'Maggi Goreng Mamak Special',
-        description:
-            'Wok-fried instant noodles with mustard greens, tofu, fried egg, and crispy chicken strips.',
+        description: 'Wok-fried instant noodles with mustard greens, tofu, fried egg, and crispy chicken strips.',
         price: 7.80,
         category: 'Supper',
         customizationGroups: const [

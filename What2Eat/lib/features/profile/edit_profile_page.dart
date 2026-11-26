@@ -26,6 +26,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final _form = GlobalKey<FormState>();
   late final TextEditingController _name, _username, _phone;
   late String _campus;
+  late final Set<String> _initialServed = {
+    ...widget.profile.servedUniversityIds,
+  };
+  late final Set<String> _served = {..._initialServed};
   List<UniversityChoice> _universities = [];
   bool _loadingUniversities = false, _universityError = false;
   bool _saving = false,
@@ -43,6 +47,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
           ProfileValidation.normalizePhone(widget.profile.phone) ||
       (widget.profile.isStudent &&
           _campus != (widget.profile.universityId ?? '')) ||
+      (widget.profile.isVendor && !_sameServed) ||
       _photo != null ||
       _removePhoto;
 
@@ -56,7 +61,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
     _phone = TextEditingController(text: widget.profile.phone)
       ..addListener(_changed);
     _campus = widget.profile.universityId ?? '';
-    if (widget.profile.isStudent) _loadUniversities();
+    if (widget.profile.isStudent || widget.profile.isVendor) {
+      _loadUniversities();
+    }
     if (widget.pickImage == null &&
         !kIsWeb &&
         defaultTargetPlatform == TargetPlatform.android) {
@@ -67,6 +74,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
   void _changed() {
     if (mounted) setState(() {});
   }
+
+  bool get _sameServed =>
+      _served.length == _initialServed.length &&
+      _served.containsAll(_initialServed);
 
   @override
   void dispose() {
@@ -268,6 +279,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Future<void> _save() async {
     if (_busy || !_dirty || !_form.currentState!.validate()) return;
+    if (widget.profile.isVendor && _served.isEmpty) {
+      _showError('Select at least one university, or Other university.');
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() {
       _saving = true;
@@ -290,6 +305,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
           avatarPath: _removePhoto
               ? null
               : (_uploadedDraftPath ?? widget.profile.avatarPath),
+          servedUniversityIds: widget.profile.isVendor && !_sameServed
+              ? _served.toList()
+              : null,
         ),
       );
       if (mounted) _leave(updated);
@@ -302,13 +320,141 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
   }
 
+  /// Directory universities ("Other university" is last), plus any served but
+  /// inactive ones so the vendor can still remove them.
+  List<UniversityChoice> get _servedOptions {
+    final known = {for (final u in _universities) u.id};
+    return [
+      ..._universities,
+      for (final id in _served)
+        if (!known.contains(id)) UniversityChoice(id, 'Unavailable university'),
+    ];
+  }
+
+  String _servedLabel(String id) =>
+      _servedOptions.where((u) => u.id == id).firstOrNull?.name ??
+      'Unavailable university';
+
+  Future<void> _pickServedUniversities() async {
+    final selected = {..._served};
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('Universities you serve'),
+          content: SizedBox(
+            width: 380,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final u in _servedOptions)
+                    CheckboxListTile(
+                      key: ValueKey('served-university-${u.id}'),
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(u.name),
+                      value: selected.contains(u.id),
+                      onChanged: (checked) => update(
+                        () => checked == true
+                            ? selected.add(u.id)
+                            : selected.remove(u.id),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, selected),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _served
+        ..clear()
+        ..addAll(result);
+      _error = null;
+    });
+  }
+
+  Widget _servedUniversitiesSection() {
+    final canPick = !_busy && !_loadingUniversities && !_universityError;
+    return ProfileSection(
+      title: 'Universities you serve',
+      subtitle: 'Customers at these campuses can find your kitchen.',
+      children: [
+        if (_loadingUniversities) const LinearProgressIndicator(),
+        if (_universityError) ...[
+          const Text(
+            'Could not load the university directory. Your current selection is kept.',
+          ),
+          TextButton.icon(
+            onPressed: _busy ? null : _loadUniversities,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry universities'),
+          ),
+        ] else ...[
+          InkWell(
+            key: const ValueKey('served-universities-field'),
+            borderRadius: BorderRadius.circular(14),
+            onTap: canPick ? _pickServedUniversities : null,
+            child: InputDecorator(
+              isEmpty: _served.isEmpty,
+              decoration: InputDecoration(
+                labelText: 'Universities served',
+                prefixIcon: const Icon(Icons.school_outlined),
+                suffixIcon: const Icon(Icons.arrow_drop_down),
+                enabled: canPick,
+                errorText: _served.isEmpty && !_loadingUniversities
+                    ? 'Select at least one university, or Other university.'
+                    : null,
+              ),
+              child: Text(
+                _served.isEmpty
+                    ? ''
+                    : '${_served.length} selected',
+              ),
+            ),
+          ),
+          if (_served.isNotEmpty && !_loadingUniversities)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final id in _served)
+                    InputChip(
+                      label: Text(
+                        _servedLabel(id),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      onDeleted: _busy
+                          ? null
+                          : () => setState(() => _served.remove(id)),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) => profileTheme(context, (context) {
     final colors = Theme.of(context).colorScheme;
-    final choices = [
-      const UniversityChoice('', 'Other / not listed', 'OTHER'),
-      ..._universities,
-    ];
+    // "Other university" is a regular directory row (listed last).
+    final choices = [..._universities];
     if (_campus.isNotEmpty && !choices.any((u) => u.id == _campus)) {
       choices.add(
         UniversityChoice(_campus, 'Current university (unavailable)'),
@@ -483,8 +629,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
                               key: ValueKey(
                                 'campus-$_campus-${choices.length}',
                               ),
-                              initialValue: _campus,
+                              initialValue: _campus.isEmpty ? null : _campus,
                               isExpanded: true,
+                              validator: (value) => value == null
+                                  ? 'Select your university, or Other university.'
+                                  : null,
                               decoration: const InputDecoration(
                                 labelText: 'University',
                                 prefixIcon: Icon(Icons.school_outlined),
@@ -536,6 +685,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                             ),
                         ],
                       ),
+                    if (widget.profile.isVendor) _servedUniversitiesSection(),
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16),

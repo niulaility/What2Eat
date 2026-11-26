@@ -11,24 +11,34 @@ class UserProfile {
     required this.updatedAt,
     this.universityId,
     this.avatarPath,
+    this.servedUniversityIds = const [],
   });
 
-  factory UserProfile.fromJson(Map<String, dynamic> row, {String? email}) =>
-      UserProfile(
-        id: row['id'] as String,
-        role: row['role'] as String,
-        fullName: row['full_name'] as String? ?? '',
-        username: row['username'] as String? ?? '',
-        email: email ?? row['email'] as String? ?? '',
-        phone: row['phone_number'] as String? ?? '',
-        updatedAt: row['updated_at'] as String,
-        universityId: row['university_id'] as String?,
-        avatarPath: row['avatar_url'] as String?,
-      );
+  factory UserProfile.fromJson(
+    Map<String, dynamic> row, {
+    String? email,
+    List<String> servedUniversityIds = const [],
+  }) => UserProfile(
+    id: row['id'] as String,
+    role: row['role'] as String,
+    fullName: row['full_name'] as String? ?? '',
+    username: row['username'] as String? ?? '',
+    email: email ?? row['email'] as String? ?? '',
+    phone: row['phone_number'] as String? ?? '',
+    updatedAt: row['updated_at'] as String,
+    universityId: row['university_id'] as String?,
+    avatarPath: row['avatar_url'] as String?,
+    servedUniversityIds: servedUniversityIds,
+  );
 
   final String id, role, fullName, username, email, phone, updatedAt;
   final String? universityId, avatarPath;
+
+  /// Vendors only: the universities their kitchen delivers to (may include the
+  /// "Other university" directory row).
+  final List<String> servedUniversityIds;
   bool get isStudent => role == 'student';
+  bool get isVendor => role == 'vendor';
   String get displayName => fullName.trim().isEmpty ? username : fullName;
   String get roleLabel => switch (role) {
     'student' => 'Student',
@@ -47,9 +57,13 @@ class ProfileChanges {
     required this.expectedUpdatedAt,
     this.universityId,
     this.avatarPath,
+    this.servedUniversityIds,
   });
   final String userId, fullName, username, phone, expectedUpdatedAt;
   final String? universityId, avatarPath;
+
+  /// Vendors only. `null` leaves served universities unchanged.
+  final List<String>? servedUniversityIds;
 }
 
 class UniversityChoice {
