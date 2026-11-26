@@ -3,16 +3,24 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/customer_discovery_models.dart';
 
+/// vendor ID → ISO date (`yyyy-MM-dd`) → meal session IDs with a published menu.
+typedef MenuSessionsByVendor = Map<String, Map<String, Set<String>>>;
+
 class CustomerDiscoveryData {
   const CustomerDiscoveryData({
     required this.universities,
     required this.vendors,
     this.defaultUniversityId,
+    this.menuSessions,
   });
 
   final List<UniversityOption> universities;
   final List<VendorProfile> vendors;
   final String? defaultUniversityId;
+
+  /// Published menu sessions from today to [CustomerDiscoveryRepository
+  /// .menuDaysAhead] days ahead. `null` for offline sample data.
+  final MenuSessionsByVendor? menuSessions;
 }
 
 class CustomerDiscoveryRepository {
@@ -64,6 +72,17 @@ class CustomerDiscoveryRepository {
     icon: Icons.nightlight_outlined,
     sortOrder: 4,
   );
+
+  /// Display info for each `public.meal_session` enum value.
+  static const Map<String, MealSession> sessionsById = {
+    'breakfast': breakfastSession,
+    'lunch': lunchSession,
+    'dinner': dinnerSession,
+    'supper': supperSession,
+  };
+
+  /// How far ahead customers can browse menus (matches the date picker).
+  static const int menuDaysAhead = 30;
 
   /// Loads active universities and every approved, active vendor that serves
   /// at least one university. Sample data is used only when Supabase is not
@@ -133,7 +152,37 @@ class CustomerDiscoveryRepository {
       universities: universities,
       vendors: liveVendors,
       defaultUniversityId: defaultUniId,
+      menuSessions: await _loadMenuSessions(client),
     );
+  }
+
+  /// Published menus from today to [menuDaysAhead] days ahead, grouped by
+  /// vendor and date (`public.menus`, readable by customers when published).
+  Future<MenuSessionsByVendor> _loadMenuSessions(SupabaseClient client) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final rows = await client
+        .from('menus')
+        .select('vendor_id, menu_date, meal_session')
+        .eq('is_published', true)
+        .gte('menu_date', VendorProfile.formatIsoDate(today))
+        .lte(
+          'menu_date',
+          VendorProfile.formatIsoDate(
+            today.add(const Duration(days: menuDaysAhead)),
+          ),
+        );
+    final MenuSessionsByVendor result = {};
+    for (final row in rows) {
+      final vendorId = row['vendor_id'] as String;
+      final date = row['menu_date'] as String;
+      final session = row['meal_session'] as String;
+      result
+          .putIfAbsent(vendorId, () => {})
+          .putIfAbsent(date, () => <String>{})
+          .add(session);
+    }
+    return result;
   }
 
   /// Searches approved active vendors in Supabase, restricted to [universityId]
