@@ -7,6 +7,8 @@ import '../../shared/widgets/dashboard_backdrop.dart';
 import '../authentication/auth_page.dart';
 import '../profile/account_page.dart';
 import '../profile/profile_repository.dart';
+import '../messaging/messaging_pages.dart';
+import '../messaging/messaging_repository.dart';
 import 'vendor_catalog.dart';
 import 'vendor_categories_page.dart';
 import 'vendor_food_editor.dart';
@@ -19,10 +21,12 @@ class VendorDashboardPage extends StatefulWidget {
     required this.name,
     this.catalog,
     this.profileRepository,
+    this.messagingRepository,
   });
   final String name;
   final VendorCatalog? catalog;
   final ProfileRepository? profileRepository;
+  final MessagingRepository? messagingRepository;
   @override
   State<VendorDashboardPage> createState() => _VendorDashboardPageState();
 }
@@ -371,16 +375,27 @@ class _VendorDashboardPageState extends State<VendorDashboardPage>
                 (0, 'Home', Icons.home_outlined),
                 (1, 'Menus', Icons.calendar_month_outlined),
                 (2, 'Food', Icons.restaurant_menu),
-                (3, 'Settings', Icons.settings_outlined),
+                (3, 'Messages', Icons.chat_bubble_outline),
+                (4, 'Settings', Icons.settings_outlined),
               ])
                 Expanded(
                   child: Semantics(
                     selected: _tab == index,
                     button: true,
-                    enabled: index != 3,
+                    enabled: index != 4,
                     child: InkWell(
                       key: ValueKey('vendor-tab-$label'),
-                      onTap: index == 3 ? null : () => _navigate(index),
+                      onTap: index == 4
+                          ? null
+                          : index == 3
+                          ? () => Navigator.of(context).push<void>(
+                              MaterialPageRoute(
+                                builder: (_) => MessagesPage(
+                                  repository: widget.messagingRepository,
+                                ),
+                              ),
+                            )
+                          : () => _navigate(index),
                       borderRadius: BorderRadius.circular(18),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 3),

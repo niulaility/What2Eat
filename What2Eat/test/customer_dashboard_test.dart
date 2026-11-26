@@ -90,9 +90,15 @@ void main() {
       expect(find.text('Choose Meal Session'), findsOneWidget);
       expect(find.text('Breakfast'), findsOneWidget);
       expect(find.text('Lunch'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Dinner'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('Dinner'), findsOneWidget);
 
       // Tap Breakfast session -> opens dedicated menu page
+      await tester.ensureVisible(find.text('Breakfast'));
       await tester.tap(find.text('Breakfast'));
       await tester.pumpAndSettle();
 
