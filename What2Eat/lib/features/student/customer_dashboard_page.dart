@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../authentication/auth_page.dart';
 import '../profile/account_page.dart';
+import '../messaging/messaging_pages.dart';
+import '../messaging/messaging_repository.dart';
 import '../../shared/widgets/dashboard_backdrop.dart';
 import 'data/customer_discovery_repository.dart';
 import 'models/customer_discovery_models.dart';
@@ -10,10 +12,16 @@ import 'theme/what2eat_theme.dart';
 import 'vendor_profile_page.dart';
 
 class CustomerDashboardPage extends StatefulWidget {
-  const CustomerDashboardPage({super.key, required this.name, this.repository});
+  const CustomerDashboardPage({
+    super.key,
+    required this.name,
+    this.repository,
+    this.messagingRepository,
+  });
 
   final String name;
   final CustomerDiscoveryRepository? repository;
+  final MessagingRepository? messagingRepository;
 
   @override
   State<CustomerDashboardPage> createState() => _CustomerDashboardPageState();
@@ -254,6 +262,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
           universities: _universities,
           initialDate: _selectedDate,
           initialSession: initialSession,
+          messagingRepository: widget.messagingRepository,
         ),
       ),
     );
@@ -505,10 +514,20 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
               child: Semantics(
                 selected: tab.label == 'Home',
                 button: true,
-                enabled: tab.label == 'Home',
+                enabled: tab.label == 'Home' || tab.label == 'Messages',
                 child: InkWell(
                   key: ValueKey('customer-tab-${tab.label}'),
-                  onTap: tab.label == 'Home' ? () {} : null,
+                  onTap: tab.label == 'Messages'
+                      ? () => Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => MessagesPage(
+                              repository: widget.messagingRepository,
+                            ),
+                          ),
+                        )
+                      : tab.label == 'Home'
+                      ? () {}
+                      : null,
                   borderRadius: BorderRadius.circular(18),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),

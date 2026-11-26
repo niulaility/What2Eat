@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'vendor_session_menu_page.dart';
+import '../messaging/messaging_pages.dart';
+import '../messaging/messaging_repository.dart';
 
 class VendorProfilePage extends StatelessWidget {
   const VendorProfilePage({
@@ -11,12 +13,14 @@ class VendorProfilePage extends StatelessWidget {
     required this.universities,
     this.initialDate,
     this.initialSession,
+    this.messagingRepository,
   });
 
   final VendorProfile vendor;
   final List<UniversityOption> universities;
   final DateTime? initialDate;
   final MealSession? initialSession;
+  final MessagingRepository? messagingRepository;
 
   List<MealSession> get _availableSessions {
     if (initialDate != null) {
@@ -85,6 +89,12 @@ class VendorProfilePage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
         children: [
           _buildVendorProfileCard(),
+          const SizedBox(height: 16),
+          MessageVendorButton(
+            vendorId: vendor.id,
+            vendorName: vendor.businessName,
+            repository: messagingRepository,
+          ),
           const SizedBox(height: 20),
           Row(
             children: [
