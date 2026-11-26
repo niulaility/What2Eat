@@ -114,45 +114,9 @@ class CustomerDiscoveryRepository {
           .eq('is_active', true)
           .order('business_name');
 
-      final vendorUniRows = await client
-          .from('vendor_universities')
-          .select('vendor_id, university_id');
-
-      final Map<String, List<String>> uniIdsByVendor = {};
-      for (final row in (vendorUniRows as List<dynamic>)) {
-        final map = Map<String, dynamic>.from(row);
-        final vendorId = map['vendor_id']?.toString() ?? '';
-        final uniId = map['university_id']?.toString() ?? '';
-        if (vendorId.isNotEmpty && uniId.isNotEmpty) {
-          uniIdsByVendor.putIfAbsent(vendorId, () => []).add(uniId);
-        }
-      }
-
-      final List<VendorProfile> liveVendors = [];
-      for (final row in (vendorRows as List<dynamic>)) {
-        final map = Map<String, dynamic>.from(row);
-        final vendorId = map['id']?.toString() ?? '';
-        final servedUnis = uniIdsByVendor[vendorId] ?? const [];
-        if (servedUnis.isEmpty) continue;
-
-        liveVendors.add(
-          _enrichLiveVendor(
-            id: vendorId,
-            businessName: map['business_name']?.toString() ?? 'Campus Kitchen',
-            businessDescription:
-                map['business_description']?.toString() ?? '',
-            businessContactNumber:
-                map['business_contact_number']?.toString() ?? '',
-            businessAddress: map['business_address']?.toString() ?? '',
-            logoUrl: map['logo_url']?.toString(),
-            universityIds: servedUnis,
-          ),
-        );
-      }
-
-      final combinedVendors = _mergeWithSampleCampusVendors(
-        liveVendors: liveVendors,
-        universities: universities,
+      final liveVendors = await _mapVendorRows(
+        client: client,
+        vendorRows: vendorRows as List<dynamic>,
       );
 
       if (!hasCustomerRow) {
@@ -161,12 +125,98 @@ class CustomerDiscoveryRepository {
 
       return CustomerDiscoveryData(
         universities: universities,
-        vendors: combinedVendors,
+        vendors: liveVendors,
         defaultUniversityId: defaultUniId,
       );
     } catch (_) {
       return _buildFallbackData();
     }
+  }
+
+  /// Searches approved active vendors in Supabase, restricted to [universityId]
+  /// when a specific university is selected. Returns `null` when Supabase is not
+  /// initialized (e.g., offline widget tests).
+  Future<List<VendorProfile>?> searchVendors({
+    required String? universityId,
+    required String query,
+  }) async {
+    final client = _supabase;
+    if (client == null) return null;
+
+    final trimmed = query.trim();
+    var builder = client
+        .from('vendors')
+        .select(
+          'id, business_name, business_description, business_contact_number, business_address, logo_url',
+        )
+        .eq('status', 'approved')
+        .eq('is_active', true);
+
+    if (trimmed.isNotEmpty) {
+      builder = builder.ilike('business_name', '%$trimmed%');
+    }
+
+    final vendorRows = await builder.order('business_name');
+    return _mapVendorRows(
+      client: client,
+      vendorRows: vendorRows as List<dynamic>,
+      requiredUniversityId: universityId,
+    );
+  }
+
+  Future<List<VendorProfile>> _mapVendorRows({
+    required SupabaseClient client,
+    required List<dynamic> vendorRows,
+    String? requiredUniversityId,
+  }) async {
+    if (vendorRows.isEmpty) return const [];
+
+    final vendorIds = vendorRows
+        .map((r) => r['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (vendorIds.isEmpty) return const [];
+
+    final vendorUniRows = await client
+        .from('vendor_universities')
+        .select('vendor_id, university_id')
+        .inFilter('vendor_id', vendorIds);
+
+    final Map<String, List<String>> uniIdsByVendor = {};
+    for (final row in (vendorUniRows as List<dynamic>)) {
+      final map = Map<String, dynamic>.from(row);
+      final vendorId = map['vendor_id']?.toString() ?? '';
+      final uniId = map['university_id']?.toString() ?? '';
+      if (vendorId.isNotEmpty && uniId.isNotEmpty) {
+        uniIdsByVendor.putIfAbsent(vendorId, () => []).add(uniId);
+      }
+    }
+
+    final List<VendorProfile> vendors = [];
+    for (final row in vendorRows) {
+      final map = Map<String, dynamic>.from(row);
+      final vendorId = map['id']?.toString() ?? '';
+      final servedUnis = uniIdsByVendor[vendorId] ?? const [];
+      if (servedUnis.isEmpty) continue;
+      if (requiredUniversityId != null &&
+          !servedUnis.contains(requiredUniversityId)) {
+        continue;
+      }
+
+      vendors.add(
+        _enrichLiveVendor(
+          id: vendorId,
+          businessName: map['business_name']?.toString() ?? 'Campus Kitchen',
+          businessDescription: map['business_description']?.toString() ?? '',
+          businessContactNumber:
+              map['business_contact_number']?.toString() ?? '',
+          businessAddress: map['business_address']?.toString() ?? '',
+          logoUrl: map['logo_url']?.toString(),
+          universityIds: servedUnis,
+        ),
+      );
+    }
+    return vendors;
   }
 
   /// Persists the student's selected university to `public.customers`.

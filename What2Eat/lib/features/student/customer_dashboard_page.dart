@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -37,10 +39,13 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
   List<UniversityOption> _universities = [];
   List<VendorProfile> _allVendors = [];
+  List<VendorProfile>? _searchResults;
   String? _selectedUniversityId;
   bool _hasInitializedUniversity = false;
   DateTime? _selectedDate;
   String _searchQuery = '';
+  Timer? _searchDebounce;
+  int _searchRequestToken = 0;
 
   @override
   void initState() {
@@ -51,6 +56,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -104,8 +110,10 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     final uniId = _selectedUniversityId;
     final query = _searchQuery.trim().toLowerCase();
     final date = _selectedDate;
+    final source =
+        query.isNotEmpty && _searchResults != null ? _searchResults! : _allVendors;
 
-    return _allVendors.where((vendor) {
+    return source.where((vendor) {
       final servesUni = uniId == null || vendor.universityIds.contains(uniId);
       if (!servesUni) return false;
       if (query.isNotEmpty &&
@@ -117,6 +125,39 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       }
       return true;
     }).toList();
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+      if (value.trim().isEmpty) {
+        _searchResults = null;
+      }
+    });
+    _searchDebounce?.cancel();
+    if (value.trim().isEmpty) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      _runRemoteSearch();
+    });
+  }
+
+  Future<void> _runRemoteSearch() async {
+    final query = _searchQuery.trim();
+    if (query.isEmpty) {
+      if (mounted) setState(() => _searchResults = null);
+      return;
+    }
+    final token = ++_searchRequestToken;
+    try {
+      final results = await _repository.searchVendors(
+        universityId: _selectedUniversityId,
+        query: query,
+      );
+      if (!mounted || token != _searchRequestToken || results == null) return;
+      setState(() => _searchResults = results);
+    } catch (_) {
+      // Keep current filtered results if network search fails transiently.
+    }
   }
 
   Future<void> _pickMealDate() async {
@@ -154,7 +195,11 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     setState(() {
       _selectedUniversityId = universityId;
       _hasInitializedUniversity = true;
+      _searchResults = null;
     });
+    if (_searchQuery.trim().isNotEmpty) {
+      _runRemoteSearch();
+    }
     try {
       await _repository.updateSelectedUniversity(universityId);
     } catch (_) {
@@ -681,8 +726,11 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     return TextField(
       controller: _searchController,
       textInputAction: TextInputAction.search,
-      onChanged: (value) => setState(() => _searchQuery = value),
-      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      onChanged: _onSearchChanged,
+      onSubmitted: (_) {
+        FocusScope.of(context).unfocus();
+        _runRemoteSearch();
+      },
       onTapOutside: (_) => FocusScope.of(context).unfocus(),
       decoration: InputDecoration(
         hintText: 'Search vendor',
@@ -695,7 +743,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
             ? IconButton(
                 onPressed: () {
                   _searchController.clear();
-                  setState(() => _searchQuery = '');
+                  _onSearchChanged('');
                 },
                 icon: const Icon(Icons.close_rounded, size: 20),
               )
