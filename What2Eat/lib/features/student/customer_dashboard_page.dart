@@ -38,6 +38,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   List<UniversityOption> _universities = [];
   List<VendorProfile> _allVendors = [];
   String? _selectedUniversityId;
+  bool _hasInitializedUniversity = false;
   DateTime? _selectedDate;
   String _searchQuery = '';
 
@@ -66,10 +67,9 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       setState(() {
         _universities = data.universities;
         _allVendors = data.vendors;
-        _selectedUniversityId =
-            _selectedUniversityId ?? data.defaultUniversityId;
-        if (_selectedUniversityId == null && _universities.isNotEmpty) {
-          _selectedUniversityId = _universities.first.id;
+        if (!_hasInitializedUniversity) {
+          _selectedUniversityId = data.defaultUniversityId;
+          _hasInitializedUniversity = true;
         }
         _isLoading = false;
       });
@@ -92,10 +92,12 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   }
 
   UniversityOption? get _selectedUniversity {
+    final id = _selectedUniversityId;
+    if (id == null) return null;
     for (final uni in _universities) {
-      if (uni.id == _selectedUniversityId) return uni;
+      if (uni.id == id) return uni;
     }
-    return _universities.isNotEmpty ? _universities.first : null;
+    return null;
   }
 
   List<VendorProfile> get _filteredVendors {
@@ -145,7 +147,30 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     }
   }
 
+  Future<void> _selectUniversity(String? universityId) async {
+    if (_selectedUniversityId == universityId && _hasInitializedUniversity) {
+      return;
+    }
+    setState(() {
+      _selectedUniversityId = universityId;
+      _hasInitializedUniversity = true;
+    });
+    try {
+      await _repository.updateSelectedUniversity(universityId);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not save university selection. Please try again.'),
+          ),
+        );
+    }
+  }
+
   void _openUniversityPicker() {
+    final pickerOptions = <UniversityOption?>[..._universities, null];
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: What2EatTheme.creamBackground,
@@ -172,15 +197,19 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                 Flexible(
                   child: ListView.separated(
                     shrinkWrap: true,
-                    itemCount: _universities.length,
+                    itemCount: pickerOptions.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
-                      final uni = _universities[index];
-                      final isSelected = uni.id == _selectedUniversityId;
+                      final uni = pickerOptions[index];
+                      final isSelected = uni?.id == _selectedUniversityId;
+                      final codeLabel =
+                          uni != null ? uni.code.toUpperCase() : 'OTHER';
+                      final nameLabel =
+                          uni != null ? uni.name : 'Other / not listed';
                       return InkWell(
                         onTap: () {
-                          setState(() => _selectedUniversityId = uni.id);
                           Navigator.of(context).pop();
+                          _selectUniversity(uni?.id);
                         },
                         borderRadius: BorderRadius.circular(14),
                         child: Container(
@@ -214,7 +243,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  uni.code.toUpperCase(),
+                                  codeLabel,
                                   style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w800,
@@ -225,7 +254,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  uni.name,
+                                  nameLabel,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -353,7 +382,16 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                     builder: (_) => AccountPage(
                       onUpdated: (profile) {
                         if (mounted) {
-                          setState(() => _name = profile.displayName);
+                          setState(() {
+                            _name = profile.displayName;
+                            if (profile.universityId == null ||
+                                _universities.any(
+                                  (u) => u.id == profile.universityId,
+                                )) {
+                              _selectedUniversityId = profile.universityId;
+                              _hasInitializedUniversity = true;
+                            }
+                          });
                         }
                       },
                     ),
@@ -616,7 +654,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                   Text(
                     selectedUni != null
                         ? '${selectedUni.code.toUpperCase()} • ${selectedUni.name}'
-                        : 'Select University',
+                        : 'OTHER • Other / not listed',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

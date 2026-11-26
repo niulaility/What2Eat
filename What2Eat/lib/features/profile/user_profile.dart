@@ -53,8 +53,8 @@ class ProfileChanges {
 }
 
 class UniversityChoice {
-  const UniversityChoice(this.id, this.name);
-  final String id, name;
+  const UniversityChoice(this.id, this.name, [this.code = '']);
+  final String id, name, code;
 }
 
 class ProfileImage {

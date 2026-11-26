@@ -87,6 +87,7 @@ class CustomerDiscoveryRepository {
       }
 
       String? defaultUniId;
+      var hasCustomerRow = false;
       final currentUser = client.auth.currentUser;
       if (currentUser != null) {
         try {
@@ -95,7 +96,10 @@ class CustomerDiscoveryRepository {
               .select('university_id')
               .eq('user_id', currentUser.id)
               .maybeSingle();
-          defaultUniId = customerRow?['university_id']?.toString();
+          if (customerRow != null) {
+            hasCustomerRow = true;
+            defaultUniId = customerRow['university_id']?.toString();
+          }
         } catch (_) {
           // Non-customer accounts (e.g., admin previewing) may not have a customer row.
         }
@@ -151,7 +155,9 @@ class CustomerDiscoveryRepository {
         universities: universities,
       );
 
-      defaultUniId ??= universities.first.id;
+      if (!hasCustomerRow) {
+        defaultUniId ??= universities.first.id;
+      }
 
       return CustomerDiscoveryData(
         universities: universities,
@@ -161,6 +167,22 @@ class CustomerDiscoveryRepository {
     } catch (_) {
       return _buildFallbackData();
     }
+  }
+
+  /// Persists the student's selected university to `public.customers`.
+  /// Passing `null` stores "Other / not listed".
+  Future<void> updateSelectedUniversity(String? universityId) async {
+    final client = _supabase;
+    final currentUser = client?.auth.currentUser;
+    if (client == null || currentUser == null) return;
+
+    await client.from('customers').upsert(
+      {
+        'user_id': currentUser.id,
+        'university_id': universityId,
+      },
+      onConflict: 'user_id',
+    );
   }
 
   VendorProfile _enrichLiveVendor({

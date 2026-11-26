@@ -60,12 +60,16 @@ class SupabaseProfileRepository implements ProfileRepository {
   Future<List<UniversityChoice>> universities() => _guard(() async {
     final rows = await client
         .from('universities')
-        .select('id, name')
+        .select('id, code, name')
         .eq('is_active', true)
         .order('name');
     return rows
         .map(
-          (row) => UniversityChoice(row['id'] as String, row['name'] as String),
+          (row) => UniversityChoice(
+            row['id'] as String,
+            row['name'] as String,
+            row['code'] as String? ?? '',
+          ),
         )
         .toList();
   });

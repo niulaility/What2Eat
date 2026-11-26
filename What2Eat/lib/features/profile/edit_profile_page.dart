@@ -306,7 +306,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   Widget build(BuildContext context) => profileTheme(context, (context) {
     final colors = Theme.of(context).colorScheme;
     final choices = [
-      const UniversityChoice('', 'Other / not listed'),
+      const UniversityChoice('', 'Other / not listed', 'OTHER'),
       ..._universities,
     ];
     if (_campus.isNotEmpty && !choices.any((u) => u.id == _campus)) {
@@ -493,9 +493,38 @@ class _EditProfilePageState extends State<EditProfilePage> {
                                   .map(
                                     (u) => DropdownMenuItem(
                                       value: u.id,
-                                      child: Text(
-                                        u.name,
-                                        overflow: TextOverflow.ellipsis,
+                                      child: Row(
+                                        children: [
+                                          if (u.code.isNotEmpty) ...[
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 3,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFF3EFE2),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                u.code.toUpperCase(),
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Color(0xFF253729),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                          ],
+                                          Expanded(
+                                            child: Text(
+                                              u.name,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   )
