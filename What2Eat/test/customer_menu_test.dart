@@ -49,7 +49,7 @@ void main() {
   });
 
   testWidgets(
-    'Dashboard opens only open sessions, real menu content, filters and non-clickable food cards',
+    'Dashboard opens only open sessions, menu filters and selected food details',
     (tester) async {
       final repo = FakeMenuRepository();
       await tester.pumpWidget(
@@ -86,10 +86,13 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('menu-food-rice')));
       await tester.tap(find.byKey(const ValueKey('menu-food-rice')));
       await tester.pumpAndSettle();
-      expect(find.text('Spice level'), findsNothing);
-      expect(find.byType(BottomSheet), findsNothing);
-      expect(find.byType(Checkbox), findsNothing);
+      expect(repo.foodCalls, 1);
+      expect(find.byType(BottomSheet), findsOneWidget);
+      expect(find.text('Steamed rice with roast chicken'), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
+      await tester.tap(find.byTooltip('Close food details'));
+      await tester.pumpAndSettle();
+      expect(find.text('Lemon tea'), findsNothing);
       expect(find.text('View Customized Selections'), findsNothing);
       expect(find.byType(BottomNavigationBar), findsNothing);
     },

@@ -30,7 +30,37 @@ class CustomerMenuRepository {
     }
   }
 
-  Future<CustomerMenu> _load(String vendorId, String menuId) async {
+  Future<MenuItem> loadFood({
+    required String vendorId,
+    required String menuId,
+    required String foodId,
+  }) async {
+    try {
+      final menu = await _load(
+        vendorId,
+        menuId,
+        foodId: foodId,
+      ).timeout(const Duration(seconds: 20));
+      if (menu.items.length != 1 || menu.items.single.id != foodId) {
+        throw const MenuBrowseFailure(
+          'This food item is no longer on this menu.',
+        );
+      }
+      return menu.items.single;
+    } on MenuBrowseFailure {
+      rethrow;
+    } on Exception {
+      throw const MenuBrowseFailure(
+        'Could not load this food item. Please try again.',
+      );
+    }
+  }
+
+  Future<CustomerMenu> _load(
+    String vendorId,
+    String menuId, {
+    String? foodId,
+  }) async {
     final supabase = client ?? Supabase.instance.client;
     final row = await supabase
         .from('menus')
@@ -69,15 +99,16 @@ class CustomerMenuRepository {
       );
     }
 
-    final rows = await supabase
+    var query = supabase
         .from('menu_items')
         .select(
           'is_available,food:food_items(id,vendor_id,name,description,price,image_url,'
-          'category:food_categories(id,name,display_order))',
+          'category:food_categories(id,name,display_order)'
+          '${foodId == null ? '' : ',groups:food_customization_groups(id,name,min_selectable,max_selectable,display_order,options:food_customization_options(id,name,additional_price,is_available,display_order))'})',
         )
-        .eq('menu_id', menuId)
-        .order('created_at')
-        .order('id');
+        .eq('menu_id', menuId);
+    if (foodId != null) query = query.eq('food_item_id', foodId);
+    final rows = await query.order('created_at').order('id');
     final items = <MenuItem>[];
     final categoryOrder = <String, int>{};
     for (final entry in rows) {
@@ -98,6 +129,27 @@ class CustomerMenuRepository {
           imageUrl: food['image_url'] as String?,
           category: categoryName,
           isAvailable: entry['is_available'] == true,
+          customizationGroups: [
+            for (final group in _ordered(food['groups']))
+              CustomizationGroup(
+                id: group['id'] as String,
+                title: group['name'] as String,
+                isRequired: (group['min_selectable'] as num) > 0,
+                allowMultiple: (group['max_selectable'] as num) > 1,
+                minSelections: (group['min_selectable'] as num).toInt(),
+                maxSelections: (group['max_selectable'] as num).toInt(),
+                options: [
+                  for (final option in _ordered(group['options']))
+                    CustomizationOption(
+                      id: option['id'] as String,
+                      name: option['name'] as String,
+                      priceDelta: (option['additional_price'] as num)
+                          .toDouble(),
+                      isAvailable: option['is_available'] == true,
+                    ),
+                ],
+              ),
+          ],
         ),
       );
     }
@@ -123,4 +175,14 @@ class CustomerMenuRepository {
           '${time(row['delivery_start_time'])} – ${time(row['delivery_end_time'])}',
     );
   }
+
+  List<Map<String, dynamic>> _ordered(dynamic rows) =>
+      (rows as List<dynamic>? ?? [])
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList()
+        ..sort(
+          (a, b) => ((a['display_order'] as num?) ?? 0).compareTo(
+            (b['display_order'] as num?) ?? 0,
+          ),
+        );
 }

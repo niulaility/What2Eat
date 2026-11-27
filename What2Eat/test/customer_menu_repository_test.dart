@@ -166,4 +166,44 @@ void main() {
     );
     expect(requests, hasLength(2));
   });
+
+  test('Food details query is scoped to the selected menu and food and maps ordered choices', () async {
+    final requests = <http.Request>[];
+    final client = clientFor(menu(), [food('selected')], requests);
+    final selected = await CustomerMenuRepository(
+      client: client,
+      now: () => now,
+    ).loadFood(vendorId: 'vendor', menuId: 'menu', foodId: 'selected');
+    expect(requests.last.url.queryParameters['menu_id'], 'eq.menu');
+    expect(requests.last.url.queryParameters['food_item_id'], 'eq.selected');
+    expect(
+      requests.last.url.queryParameters['select'],
+      contains('food_customization_groups'),
+    );
+    expect(selected.customizationGroups.map((group) => group.title), [
+      'Spice',
+      'Add-ons',
+    ]);
+    final group = selected.customizationGroups.last;
+    expect(group.minSelections, 0);
+    expect(group.maxSelections, 2);
+    expect(group.options.first.isAvailable, isFalse);
+    expect(group.options.last.priceDelta, 1.5);
+    expect(requests.every((request) => request.method == 'GET'), isTrue);
+  });
+
+  test(
+    'Selected food removed from menu cannot be substituted with another food',
+    () async {
+      final requests = <http.Request>[];
+      final client = clientFor(menu(), [food('different')], requests);
+      await expectLater(
+        CustomerMenuRepository(
+          client: client,
+          now: () => now,
+        ).loadFood(vendorId: 'vendor', menuId: 'menu', foodId: 'selected'),
+        throwsA(isA<MenuBrowseFailure>()),
+      );
+    },
+  );
 }

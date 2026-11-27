@@ -96,12 +96,14 @@ class CustomizationOption {
     required this.name,
     this.priceDelta = 0.0,
     this.isDefault = false,
+    this.isAvailable = true,
   });
 
   final String id;
   final String name;
   final double priceDelta;
   final bool isDefault;
+  final bool isAvailable;
 }
 
 class CustomizationGroup {
@@ -112,6 +114,7 @@ class CustomizationGroup {
     required this.allowMultiple,
     required this.options,
     this.maxSelections,
+    this.minSelections,
   });
 
   final String id;
@@ -120,6 +123,7 @@ class CustomizationGroup {
   final bool allowMultiple;
   final List<CustomizationOption> options;
   final int? maxSelections;
+  final int? minSelections;
 }
 
 class CustomerMenu {
