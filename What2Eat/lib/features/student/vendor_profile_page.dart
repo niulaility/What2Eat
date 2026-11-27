@@ -1,15 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'data/customer_menu_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'widgets/menu_status_badge.dart';
 import '../messaging/messaging_pages.dart';
 import '../messaging/messaging_repository.dart';
+import 'vendor_session_menu_page.dart';
 
 /// Vendor profile for customers: business details, messaging, and every meal
 /// session the vendor published for the selected date with its ordering
-/// status. Sessions are display-only for now; later only open ones will open.
-class VendorProfilePage extends StatelessWidget {
+/// status. Only sessions within their ordering window open a menu.
+class VendorProfilePage extends StatefulWidget {
   const VendorProfilePage({
     super.key,
     required this.vendor,
@@ -18,6 +22,7 @@ class VendorProfilePage extends StatelessWidget {
     this.initialSession,
     this.menus,
     this.messagingRepository,
+    this.menuRepository,
   });
 
   final VendorProfile vendor;
@@ -30,6 +35,87 @@ class VendorProfilePage extends StatelessWidget {
   /// without ordering times (offline widget tests).
   final List<MenuSessionWindow>? menus;
   final MessagingRepository? messagingRepository;
+  final CustomerMenuRepository? menuRepository;
+
+  @override
+  State<VendorProfilePage> createState() => _VendorProfilePageState();
+}
+
+class _VendorProfilePageState extends State<VendorProfilePage>
+    with WidgetsBindingObserver {
+  Timer? _boundary;
+  VendorProfile get vendor => widget.vendor;
+  DateTime? get initialDate => widget.initialDate;
+  List<MenuSessionWindow>? get menus => widget.menus;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _schedule();
+  }
+
+  @override
+  void didUpdateWidget(covariant VendorProfilePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _schedule();
+  }
+
+  void _schedule() {
+    _boundary?.cancel();
+    final now = DateTime.now();
+    final times = [
+      for (final menu in menus ?? <MenuSessionWindow>[]) ...[
+        menu.orderOpeningAt,
+        menu.orderClosingAt,
+      ],
+    ].where((time) => time.isAfter(now)).toList()..sort();
+    if (times.isNotEmpty) {
+      _boundary = Timer(
+        times.first.difference(now) + const Duration(milliseconds: 1),
+        () {
+          if (!mounted) return;
+          setState(() {});
+          _schedule();
+        },
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      setState(() {});
+      _schedule();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _boundary?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openMenu(MenuSessionWindow menu) async {
+    if (!menu.isOpenAt(DateTime.now())) {
+      setState(() {});
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => VendorSessionMenuPage(
+          vendor: vendor,
+          menu: menu,
+          repository: widget.menuRepository,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+      _schedule();
+    }
+  }
 
   static const _months = [
     'Jan',
@@ -91,6 +177,7 @@ class VendorProfilePage extends StatelessWidget {
                     ? _formatDateLabel(menu.menuDate)
                     : null,
                 status: menu.statusAt(now),
+                onTap: menu.isOpenAt(now) ? () => _openMenu(menu) : null,
                 orderingWindow:
                     '${_formatDateTime(menu.orderOpeningAt)} – ${_formatDateTime(menu.orderClosingAt)}',
               ),
@@ -120,7 +207,7 @@ class VendorProfilePage extends StatelessWidget {
           MessageVendorButton(
             vendorId: vendor.id,
             vendorName: vendor.businessName,
-            repository: messagingRepository,
+            repository: widget.messagingRepository,
           ),
           const SizedBox(height: 20),
           if (tiles.isEmpty)
@@ -306,7 +393,7 @@ class _LogoFallback extends StatelessWidget {
   );
 }
 
-/// Display-only meal session row (no tap, no menu yet).
+/// Closed and scheduled sessions remain visible but cannot be opened.
 class _MealSessionTile extends StatelessWidget {
   const _MealSessionTile({
     super.key,
@@ -314,6 +401,7 @@ class _MealSessionTile extends StatelessWidget {
     this.dateLabel,
     this.status,
     this.orderingWindow,
+    this.onTap,
   });
 
   final MealSession session;
@@ -326,15 +414,27 @@ class _MealSessionTile extends StatelessWidget {
 
   /// "opens – closes" ordering window text; null for offline sample data.
   final String? orderingWindow;
+  final VoidCallback? onTap;
 
-  /// Only open sessions will be tappable once session menus are wired.
+  /// Only sessions in their ordering window are tappable.
   bool get isOrderable => status == MenuOrderStatus.open;
 
   @override
   Widget build(BuildContext context) {
     return Opacity(
       opacity: status == null || isOrderable ? 1 : 0.6,
-      child: _buildTile(),
+      child: Semantics(
+        button: true,
+        enabled: onTap != null,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: _buildTile(),
+          ),
+        ),
+      ),
     );
   }
 
@@ -367,26 +467,24 @@ class _MealSessionTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Expanded(
-                      child: Text(
-                        dateLabel == null
-                            ? session.name
-                            : '${session.name} · $dateLabel',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: What2EatTheme.darkGreenText,
-                        ),
+                    Text(
+                      dateLabel == null
+                          ? session.name
+                          : '${session.name} · $dateLabel',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: What2EatTheme.darkGreenText,
                       ),
                     ),
-                    if (status != null) ...[
-                      const SizedBox(width: 8),
-                      MenuStatusBadge(status: status!),
-                    ],
+                    if (status != null) MenuStatusBadge(status: status!),
                   ],
                 ),
                 if (orderingWindow != null) ...[
@@ -428,6 +526,10 @@ class _MealSessionTile extends StatelessWidget {
               ],
             ),
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right, color: What2EatTheme.forestGreen),
+          ],
         ],
       ),
     );

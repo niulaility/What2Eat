@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/customer_discovery_models.dart';
 import '../theme/what2eat_theme.dart';
 
-/// Colours for each ordering status. Only [MenuOrderStatus.open] menus will
-/// be tappable once menus are wired.
+/// Colours for each ordering status. Only open menus are tappable.
 ({Color background, Color foreground}) menuStatusColors(
   MenuOrderStatus status,
 ) => switch (status) {

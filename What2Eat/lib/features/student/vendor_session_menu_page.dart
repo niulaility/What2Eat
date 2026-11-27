@@ -1,429 +1,258 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'data/customer_menu_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
-import 'widgets/food_item_detail_sheet.dart';
+import 'widgets/menu_food_image.dart';
 
 class VendorSessionMenuPage extends StatefulWidget {
   const VendorSessionMenuPage({
     super.key,
     required this.vendor,
-    required this.session,
-    this.selectedDate,
+    required this.menu,
+    this.repository,
   });
-
   final VendorProfile vendor;
-  final MealSession session;
-  final DateTime? selectedDate;
+  final MenuSessionWindow menu;
+  final CustomerMenuRepository? repository;
 
   @override
   State<VendorSessionMenuPage> createState() => _VendorSessionMenuPageState();
 }
 
-class _VendorSessionMenuPageState extends State<VendorSessionMenuPage> {
-  String _selectedCategory = 'All';
-  final List<SelectedCartItem> _selections = [];
+class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
+    with WidgetsBindingObserver {
+  late final _repository = widget.repository ?? CustomerMenuRepository();
+  CustomerMenu? _menu;
+  String? _category, _error;
+  bool _loading = true;
+  Timer? _closing;
+  int _request = 0;
 
-  List<MenuItem> get _sessionMenu =>
-      widget.vendor.menuForSession(widget.session.id);
-
-  List<String> get _categories {
-    final cats = <String>{'All'};
-    for (final item in _sessionMenu) {
-      cats.add(item.category);
-    }
-    return cats.toList();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _load();
   }
 
-  List<MenuItem> get _filteredMenu {
-    if (_selectedCategory == 'All') return _sessionMenu;
-    return _sessionMenu
-        .where((item) => item.category == _selectedCategory)
-        .toList();
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _closing?.cancel();
+    super.dispose();
   }
 
-  Future<void> _openFoodItemDetail(MenuItem item) async {
-    final selected = await showModalBottomSheet<SelectedCartItem>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => FoodItemDetailSheet(
-        item: item,
-        session: widget.session,
-        selectedDate: widget.selectedDate,
-      ),
-    );
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
 
-    if (selected == null || !mounted) return;
+  Future<void> _load() async {
+    final request = ++_request;
+    _closing?.cancel();
     setState(() {
-      _selections.add(selected);
+      _loading = true;
+      _error = null;
     });
-
-    final optionsText = selected.selectedOptionLabels.isEmpty
-        ? 'Standard'
-        : selected.selectedOptionLabels.join(', ');
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          backgroundColor: What2EatTheme.forestGreen,
-          content: Text(
-            'Added ${selected.quantity}× ${selected.item.name} ($optionsText)',
-          ),
-        ),
+    try {
+      final menu = await _repository.loadMenu(
+        vendorId: widget.vendor.id,
+        menuId: widget.menu.menuId,
       );
+      if (!mounted || request != _request) return;
+      if (!menu.window.isOpenAt(DateTime.now())) {
+        throw const MenuBrowseFailure('This meal session is not open.');
+      }
+      setState(() {
+        _menu = menu;
+        if (!menu.items.any((item) => item.category == _category)) {
+          _category = null;
+        }
+        _loading = false;
+      });
+      final remaining = menu.window.orderClosingAt.difference(DateTime.now());
+      _closing = Timer(
+        remaining.isNegative ? Duration.zero : remaining,
+        _expire,
+      );
+    } catch (error) {
+      if (!mounted || request != _request) return;
+      setState(() {
+        _menu = null;
+        _loading = false;
+        _error = error is MenuBrowseFailure
+            ? error.message
+            : 'Could not load this menu. Please try again.';
+      });
+    }
   }
 
-  void _showSelectionsSummary() {
-    final totalAmount = _selections.fold<double>(
-      0,
-      (sum, item) => sum + item.totalPrice,
-    );
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: What2EatTheme.creamBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Your Selected Items',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: What2EatTheme.darkGreenText,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'RM ${totalAmount.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
-                      color: What2EatTheme.forestGreen,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _selections.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (_, index) {
-                    final entry = _selections[index];
-                    return Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: What2EatTheme.border),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: What2EatTheme.softYellowBadge,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '${entry.quantity}×',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: What2EatTheme.darkGreenText,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  entry.item.name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: What2EatTheme.darkGreenText,
-                                  ),
-                                ),
-                                if (entry.selectedOptionLabels.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      entry.selectedOptionLabels.join(' • '),
-                                      style: const TextStyle(
-                                        fontSize: 12.5,
-                                        color: What2EatTheme.mutedText,
-                                      ),
-                                    ),
-                                  ),
-                                if (entry.notes != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      'Note: ${entry.notes}',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontStyle: FontStyle.italic,
-                                        color: What2EatTheme.subtleText,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'RM ${entry.totalPrice.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: What2EatTheme.darkGreenText,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _expire() {
+    if (!mounted) return;
+    setState(() {
+      _menu = null;
+      _error = 'Ordering for this meal session has closed.';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final menu = _filteredMenu;
-    final totalCount = _selections.fold<int>(0, (s, e) => s + e.quantity);
-    final totalPrice =
-        _selections.fold<double>(0, (s, e) => s + e.totalPrice);
-
+    final menu = _menu;
+    final categories =
+        menu?.items.map((item) => item.category).toSet() ?? <String>{};
+    final items =
+        menu?.items
+            .where((item) => _category == null || item.category == _category)
+            .toList() ??
+        <MenuItem>[];
     return Scaffold(
       backgroundColor: What2EatTheme.creamBackground,
       appBar: AppBar(
         backgroundColor: What2EatTheme.creamBackground,
-        elevation: 0,
         foregroundColor: What2EatTheme.darkGreenText,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${widget.session.name} Menu',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: What2EatTheme.darkGreenText,
-              ),
-            ),
-            Text(
-              '${widget.vendor.businessName} • Last order ${widget.session.lastOrderTime}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: What2EatTheme.oliveAccent,
-              ),
-            ),
-          ],
+        title: Text(
+          '${widget.menu.session.name} Menu',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh menu',
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
-      bottomNavigationBar: _selections.isEmpty
-          ? null
-          : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: FilledButton(
-                  onPressed: _showSelectionsSummary,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: What2EatTheme.goldenYellow,
-                    foregroundColor: What2EatTheme.darkGreenText,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 15,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: Row(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: What2EatTheme.forestGreen,
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text(
-                          '$totalCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'View Customized Selections',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'RM ${totalPrice.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15.5,
-                        ),
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: _load,
+                        child: const Text('Try again'),
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        children: [
-          if (_categories.length > 2) ...[
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
+            )
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                key: const ValueKey('digital-menu'),
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                 children: [
-                  for (final cat in _categories)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        selected: _selectedCategory == cat,
-                        onSelected: (_) =>
-                            setState(() => _selectedCategory = cat),
-                        label: Text(cat),
-                        selectedColor: What2EatTheme.softSurface,
-                        backgroundColor: Colors.white,
-                        checkmarkColor: What2EatTheme.forestGreen,
-                        labelStyle: TextStyle(
-                          fontWeight: _selectedCategory == cat
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: What2EatTheme.darkGreenText,
-                        ),
-                        side: const BorderSide(color: What2EatTheme.border),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          if (menu.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: What2EatTheme.border),
-              ),
-              child: const Column(
-                children: [
-                  Icon(
-                    Icons.no_meals_outlined,
-                    size: 40,
-                    color: What2EatTheme.oliveAccent,
-                  ),
-                  SizedBox(height: 10),
                   Text(
-                    'No dishes published for this meal session yet.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
+                    widget.vendor.businessName,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
                       color: What2EatTheme.darkGreenText,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${menu!.window.menuDate.day}/${menu.window.menuDate.month}/${menu.window.menuDate.year}',
+                    style: const TextStyle(
+                      color: What2EatTheme.mutedText,
+                      height: 1.5,
+                    ),
+                  ),
+                  Text(
+                    'Ordering closes ${_time(menu.window.orderClosingAt)}',
+                    style: const TextStyle(
+                      color: What2EatTheme.mutedText,
+                      height: 1.5,
+                    ),
+                  ),
+                  Text(
+                    'Estimated delivery ${menu.deliveryTimeRange}',
+                    style: const TextStyle(
+                      color: What2EatTheme.mutedText,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (categories.isNotEmpty) ...[
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _filter('All', null),
+                          for (final category in categories)
+                            _filter(category, category),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (items.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 32),
+                      child: Text(
+                        'No dishes published for this meal session yet.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  for (final item in items) _FoodItemCard(item: item),
                 ],
               ),
-            )
-          else
-            for (final item in menu)
-              _FoodItemCard(
-                item: item,
-                onTap: () => _openFoodItemDetail(item),
-              ),
-        ],
-      ),
+            ),
     );
   }
+
+  String _time(DateTime value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  Widget _filter(String label, String? value) => Padding(
+    padding: const EdgeInsets.only(right: 8),
+    child: FilterChip(
+      selected: _category == value,
+      onSelected: (_) => setState(() => _category = value),
+      label: Text(label),
+      selectedColor: What2EatTheme.softSurface,
+      backgroundColor: Colors.white,
+      checkmarkColor: What2EatTheme.forestGreen,
+      labelStyle: const TextStyle(color: What2EatTheme.darkGreenText),
+      side: const BorderSide(color: What2EatTheme.border),
+      shape: const StadiumBorder(),
+    ),
+  );
 }
 
 class _FoodItemCard extends StatelessWidget {
-  const _FoodItemCard({
-    required this.item,
-    required this.onTap,
-  });
-
+  const _FoodItemCard({required this.item});
   final MenuItem item;
-  final VoidCallback onTap;
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: What2EatTheme.border),
+        side: const BorderSide(color: What2EatTheme.border),
       ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        key: ValueKey('menu-food-${item.id}'),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: What2EatTheme.softSurfaceAlt,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.lunch_dining_rounded,
-                  size: 32,
-                  color: What2EatTheme.forestGreen,
-                ),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: MenuFoodImage(item: item, size: 72),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -432,16 +261,17 @@ class _FoodItemCard extends StatelessWidget {
                   children: [
                     Text(
                       item.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                         color: What2EatTheme.darkGreenText,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -455,18 +285,16 @@ class _FoodItemCard extends StatelessWidget {
                           child: Text(
                             'RM ${item.price.toStringAsFixed(2)}',
                             style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w600,
                               color: What2EatTheme.darkGreenText,
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        const Icon(
-                          Icons.add_circle_rounded,
-                          color: What2EatTheme.forestGreen,
-                          size: 24,
-                        ),
+                        if (!item.isAvailable)
+                          const Text(
+                            'Sold out',
+                            style: TextStyle(color: What2EatTheme.mutedText),
+                          ),
                       ],
                     ),
                   ],
@@ -476,6 +304,6 @@ class _FoodItemCard extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
