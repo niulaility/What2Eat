@@ -67,6 +67,25 @@ class _AccountPageState extends State<AccountPage> {
         /* Profile details still load if the directory is offline. */
       }
       name ??= 'Current university (directory unavailable)';
+    } else if (profile.isVendor && profile.servedUniversityIds.isNotEmpty) {
+      try {
+        // Directory order, so "Other university" is listed last.
+        final choices = await _repository.universities();
+        final served = profile.servedUniversityIds.toSet();
+        final names = [
+          for (final c in choices)
+            if (served.contains(c.id)) c.name,
+        ];
+        final unavailable =
+            served.length - choices.where((c) => served.contains(c.id)).length;
+        name = [
+          ...names,
+          for (var i = 0; i < unavailable; i++) 'Unavailable university',
+        ].join('\n');
+      } catch (_) {
+        name =
+            '${profile.servedUniversityIds.length} universities (directory unavailable)';
+      }
     }
     if (mounted) setState(() => _campusName = name);
   }
@@ -232,7 +251,14 @@ class _AccountPageState extends State<AccountPage> {
                               context,
                               Icons.school_outlined,
                               'University',
-                              _campusName ?? 'Other / not listed',
+                              _campusName ?? 'Not selected',
+                            ),
+                          if (_profile!.isVendor)
+                            _detail(
+                              context,
+                              Icons.school_outlined,
+                              'Universities served',
+                              _campusName ?? '',
                             ),
                         ],
                       ),

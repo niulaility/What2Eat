@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -10,6 +12,7 @@ import 'data/customer_discovery_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'vendor_profile_page.dart';
+import 'widgets/menu_status_badge.dart';
 
 class CustomerDashboardPage extends StatefulWidget {
   const CustomerDashboardPage({
@@ -37,9 +40,19 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
   List<UniversityOption> _universities = [];
   List<VendorProfile> _allVendors = [];
+  List<VendorProfile>? _searchResults;
   String? _selectedUniversityId;
-  DateTime? _selectedDate;
+  bool _hasInitializedUniversity = false;
   String _searchQuery = '';
+  Timer? _searchDebounce;
+  int _searchRequestToken = 0;
+
+  /// Meal date filter. Always set (starts on today) so sessions from different
+  /// dates are never mixed.
+  late DateTime _selectedDate = _today;
+
+  /// Published menu sessions per vendor and date; null for offline sample data.
+  MenuSessionsByVendor? _menuSessions;
 
   @override
   void initState() {
@@ -50,6 +63,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -66,10 +80,10 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
       setState(() {
         _universities = data.universities;
         _allVendors = data.vendors;
-        _selectedUniversityId =
-            _selectedUniversityId ?? data.defaultUniversityId;
-        if (_selectedUniversityId == null && _universities.isNotEmpty) {
-          _selectedUniversityId = _universities.first.id;
+        _menuSessions = data.menuSessions;
+        if (!_hasInitializedUniversity) {
+          _selectedUniversityId = data.defaultUniversityId;
+          _hasInitializedUniversity = true;
         }
         _isLoading = false;
       });
@@ -92,60 +106,182 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   }
 
   UniversityOption? get _selectedUniversity {
+    final id = _selectedUniversityId;
+    if (id == null) return null;
     for (final uni in _universities) {
-      if (uni.id == _selectedUniversityId) return uni;
+      if (uni.id == id) return uni;
     }
-    return _universities.isNotEmpty ? _universities.first : null;
+    return null;
   }
 
+  /// Approved vendors that serve the selected university, narrowed by search.
+  /// "Other university" is a regular university row, so it filters the same
+  /// way. With no university selected yet, nothing is shown.
   List<VendorProfile> get _filteredVendors {
     final uniId = _selectedUniversityId;
+    if (uniId == null) return const [];
     final query = _searchQuery.trim().toLowerCase();
-    final date = _selectedDate;
+    final source = query.isNotEmpty && _searchResults != null
+        ? _searchResults!
+        : _allVendors;
 
-    return _allVendors.where((vendor) {
-      final servesUni = uniId == null || vendor.universityIds.contains(uniId);
-      if (!servesUni) return false;
+    return source.where((vendor) {
+      if (!vendor.universityIds.contains(uniId)) return false;
       if (query.isNotEmpty &&
           !vendor.businessName.toLowerCase().contains(query)) {
         return false;
       }
-      if (date != null && vendor.sessionsForDate(date).isEmpty) {
-        return false;
-      }
-      return true;
+      // Only vendors with a published menu on the selected date.
+      final menus = _menusFor(vendor);
+      return menus != null
+          ? menus.isNotEmpty
+          : vendor.sessionsForDate(_selectedDate).isNotEmpty; // offline
     }).toList();
   }
 
-  Future<void> _pickMealDate() async {
+  /// All of the vendor's published menus on [_selectedDate] (open, not open
+  /// yet, or closed), in Breakfast → Supper order. `null` for offline sample
+  /// data.
+  List<MenuSessionWindow>? _menusFor(VendorProfile vendor) {
+    final menus = _menuSessions;
+    if (menus == null) return null;
+    return [
+      for (final menu in menus[vendor.id] ?? const <MenuSessionWindow>[])
+        if (_isSameDay(menu.menuDate, _selectedDate)) menu,
+    ]..sort((a, b) => a.session.sortOrder.compareTo(b.session.sortOrder));
+  }
+
+  DateTime get _today {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  String _formatDateShort(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${date.day} ${months[date.month - 1]}';
+  }
+
+  void _openVendorProfile(VendorProfile vendor) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => VendorProfilePage(
+          vendor: vendor,
+          universities: _universities,
+          initialDate: _selectedDate,
+          menus: _menusFor(vendor),
+          messagingRepository: widget.messagingRepository,
+        ),
+      ),
+    );
+  }
+
+  void _selectDate(DateTime date) => setState(() => _selectedDate = date);
+
+  Future<void> _pickMealDate() async {
+    final today = _today;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate ?? today,
+      initialDate: _selectedDate.isBefore(today) ? today : _selectedDate,
       firstDate: today,
-      lastDate: today.add(const Duration(days: 14)),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: What2EatTheme.forestGreen,
-              onPrimary: Colors.white,
-              surface: What2EatTheme.creamBackground,
-              onSurface: What2EatTheme.darkGreenText,
+      lastDate: today.add(
+        const Duration(days: CustomerDiscoveryRepository.menuDaysAhead),
+      ),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: What2EatTheme.forestGreen,
+            onPrimary: Colors.white,
+            surface: What2EatTheme.creamBackground,
+            onSurface: What2EatTheme.darkGreenText,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _selectedDate = picked);
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+      if (value.trim().isEmpty) {
+        _searchResults = null;
+      }
+    });
+    _searchDebounce?.cancel();
+    if (value.trim().isEmpty) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      _runRemoteSearch();
+    });
+  }
+
+  Future<void> _runRemoteSearch() async {
+    final query = _searchQuery.trim();
+    if (query.isEmpty) {
+      if (mounted) setState(() => _searchResults = null);
+      return;
+    }
+    final token = ++_searchRequestToken;
+    try {
+      final results = await _repository.searchVendors(
+        universityId: _selectedUniversityId,
+        query: query,
+      );
+      if (!mounted || token != _searchRequestToken || results == null) return;
+      setState(() => _searchResults = results);
+    } catch (_) {
+      // Keep current filtered results if network search fails transiently.
+    }
+  }
+
+  Future<void> _selectUniversity(String? universityId) async {
+    if (_selectedUniversityId == universityId && _hasInitializedUniversity) {
+      return;
+    }
+    setState(() {
+      _selectedUniversityId = universityId;
+      _hasInitializedUniversity = true;
+      _searchResults = null;
+    });
+    if (_searchQuery.trim().isNotEmpty) {
+      _runRemoteSearch();
+    }
+    try {
+      await _repository.updateSelectedUniversity(universityId);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not save university selection. Please try again.',
             ),
           ),
-          child: child!,
         );
-      },
-    );
-
-    if (picked != null && mounted) {
-      setState(() => _selectedDate = picked);
     }
   }
 
   void _openUniversityPicker() {
+    // "Other university" is a regular database row (listed last).
+    final pickerOptions = _universities;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: What2EatTheme.creamBackground,
@@ -172,15 +308,17 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                 Flexible(
                   child: ListView.separated(
                     shrinkWrap: true,
-                    itemCount: _universities.length,
+                    itemCount: pickerOptions.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
-                      final uni = _universities[index];
+                      final uni = pickerOptions[index];
                       final isSelected = uni.id == _selectedUniversityId;
+                      final codeLabel = uni.code.toUpperCase();
+                      final nameLabel = uni.name;
                       return InkWell(
                         onTap: () {
-                          setState(() => _selectedUniversityId = uni.id);
                           Navigator.of(context).pop();
+                          _selectUniversity(uni.id);
                         },
                         borderRadius: BorderRadius.circular(14),
                         child: Container(
@@ -214,7 +352,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  uni.code.toUpperCase(),
+                                  codeLabel,
                                   style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w800,
@@ -225,7 +363,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  uni.name,
+                                  nameLabel,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -254,46 +392,8 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     );
   }
 
-  void _openVendorProfile(VendorProfile vendor, {MealSession? initialSession}) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => VendorProfilePage(
-          vendor: vendor,
-          universities: _universities,
-          initialDate: _selectedDate,
-          initialSession: initialSession,
-          messagingRepository: widget.messagingRepository,
-        ),
-      ),
-    );
-  }
-
-  bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  String _formatDateShort(DateTime date) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${date.day} ${months[date.month - 1]}';
-  }
-
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
     final selectedUni = _selectedUniversity;
     final firstName = _name.trim().isEmpty
         ? 'there'
@@ -353,7 +453,16 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                     builder: (_) => AccountPage(
                       onUpdated: (profile) {
                         if (mounted) {
-                          setState(() => _name = profile.displayName);
+                          setState(() {
+                            _name = profile.displayName;
+                            if (profile.universityId == null ||
+                                _universities.any(
+                                  (u) => u.id == profile.universityId,
+                                )) {
+                              _selectedUniversityId = profile.universityId;
+                              _hasInitializedUniversity = true;
+                            }
+                          });
                         }
                       },
                     ),
@@ -477,7 +586,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                         const SizedBox(height: 12),
                         _buildSearchField(),
                         const SizedBox(height: 12),
-                        _buildMealDateFilter(today, tomorrow),
+                        _buildMealDateFilter(),
                         const SizedBox(height: 18),
                         _buildVendorsList(),
                       ],
@@ -616,7 +725,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
                   Text(
                     selectedUni != null
                         ? '${selectedUni.code.toUpperCase()} • ${selectedUni.name}'
-                        : 'Select University',
+                        : 'Select your university',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -643,8 +752,11 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     return TextField(
       controller: _searchController,
       textInputAction: TextInputAction.search,
-      onChanged: (value) => setState(() => _searchQuery = value),
-      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      onChanged: _onSearchChanged,
+      onSubmitted: (_) {
+        FocusScope.of(context).unfocus();
+        _runRemoteSearch();
+      },
       onTapOutside: (_) => FocusScope.of(context).unfocus(),
       decoration: InputDecoration(
         hintText: 'Search vendor',
@@ -657,7 +769,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
             ? IconButton(
                 onPressed: () {
                   _searchController.clear();
-                  setState(() => _searchQuery = '');
+                  _onSearchChanged('');
                 },
                 icon: const Icon(Icons.close_rounded, size: 20),
               )
@@ -684,11 +796,13 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
     );
   }
 
-  Widget _buildMealDateFilter(DateTime today, DateTime tomorrow) {
-    final bool isCustomDate =
-        _selectedDate != null &&
-        !_isSameDay(_selectedDate!, today) &&
-        !_isSameDay(_selectedDate!, tomorrow);
+  Widget _buildMealDateFilter() {
+    final today = _today;
+    final tomorrow = today.add(const Duration(days: 1));
+    final selected = _selectedDate;
+    final isToday = _isSameDay(selected, today);
+    final isTomorrow = _isSameDay(selected, tomorrow);
+    final isCustom = !isToday && !isTomorrow;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -707,32 +821,24 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
           child: Row(
             children: [
               _DateFilterChip(
-                label: 'All Dates',
-                selected: _selectedDate == null,
-                onTap: () => setState(() => _selectedDate = null),
-              ),
-              const SizedBox(width: 8),
-              _DateFilterChip(
+                key: const ValueKey('date-filter-today'),
                 label: 'Today (${_formatDateShort(today)})',
-                selected:
-                    _selectedDate != null && _isSameDay(_selectedDate!, today),
-                onTap: () => setState(() => _selectedDate = today),
+                selected: isToday,
+                onTap: () => _selectDate(today),
               ),
               const SizedBox(width: 8),
               _DateFilterChip(
+                key: const ValueKey('date-filter-tomorrow'),
                 label: 'Tomorrow (${_formatDateShort(tomorrow)})',
-                selected:
-                    _selectedDate != null &&
-                    _isSameDay(_selectedDate!, tomorrow),
-                onTap: () => setState(() => _selectedDate = tomorrow),
+                selected: isTomorrow,
+                onTap: () => _selectDate(tomorrow),
               ),
               const SizedBox(width: 8),
               _DateFilterChip(
-                label: isCustomDate
-                    ? _formatDateShort(_selectedDate!)
-                    : 'Pick Date',
+                key: const ValueKey('date-filter-custom'),
+                label: isCustom ? _formatDateShort(selected) : 'Pick date',
                 icon: Icons.calendar_today_outlined,
-                selected: isCustomDate,
+                selected: isCustom,
                 onTap: _pickMealDate,
               ),
             ],
@@ -773,18 +879,19 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
         const SizedBox(height: 10),
         if (vendors.isEmpty)
           _buildEmptyVendorsCard(
-            _selectedDate == null
-                ? 'No approved vendors match your current university or search.'
-                : 'No vendors available on ${_formatDateShort(_selectedDate!)}. Try another date or select "All Dates".',
+            _selectedUniversityId == null
+                ? 'Select your university to see vendors that deliver to your campus.'
+                : _searchQuery.trim().isNotEmpty
+                ? 'No vendors at this university match "${_searchQuery.trim()}" with a menu on ${_formatDateShort(_selectedDate)}.'
+                : 'No vendors have a menu on ${_formatDateShort(_selectedDate)}. Try another date.',
           )
         else
           for (final vendor in vendors)
             _VendorDiscoveryCard(
               key: ValueKey('customer-vendor-${vendor.id}'),
               vendor: vendor,
-              sessions: _selectedDate == null
-                  ? vendor.offeredSessions
-                  : vendor.sessionsForDate(_selectedDate!),
+              menus: _menusFor(vendor),
+              sampleSessions: vendor.sessionsForDate(_selectedDate),
               onTap: () => _openVendorProfile(vendor),
             ),
       ],
@@ -822,8 +929,161 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
   }
 }
 
+/// Vendor summary card; tapping opens the vendor profile.
+class _VendorDiscoveryCard extends StatelessWidget {
+  const _VendorDiscoveryCard({
+    super.key,
+    required this.vendor,
+    required this.menus,
+    required this.sampleSessions,
+    required this.onTap,
+  });
+
+  final VendorProfile vendor;
+
+  /// The vendor's published menus on the selected date, each shown with its
+  /// ordering status. `null` for offline sample data ([sampleSessions]).
+  final List<MenuSessionWindow>? menus;
+  final List<MealSession> sampleSessions;
+
+  /// Opens the vendor profile.
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: What2EatTheme.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(onTap: onTap, child: _buildContent()),
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    return Padding(
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: What2EatTheme.softSurfaceAlt,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: vendor.logoUrl?.isNotEmpty == true
+                    ? Image.network(
+                        vendor.logoUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const _VendorLogoFallback(),
+                      )
+                    : const _VendorLogoFallback(),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        vendor.businessName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: What2EatTheme.darkGreenText,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            vendor.businessDescription,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: What2EatTheme.mutedText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: menus == null
+                ? [
+                    for (final session in sampleSessions)
+                      _sessionChip(session: session, status: null),
+                  ]
+                : [
+                    for (final menu in menus!)
+                      _sessionChip(
+                        session: menu.session,
+                        status: menu.statusAt(DateTime.now()),
+                      ),
+                  ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Display-only chip: session name plus its ordering status.
+  Widget _sessionChip({
+    required MealSession session,
+    required MenuOrderStatus? status,
+  }) {
+    final colors = status == null ? null : menuStatusColors(status);
+    final dimmed = status != null && status != MenuOrderStatus.open;
+    return Container(
+      key: ValueKey('vendor-${vendor.id}-session-${session.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors?.background ?? What2EatTheme.softSurfaceAlt,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            session.icon,
+            size: 16,
+            color: dimmed ? colors!.foreground : What2EatTheme.forestGreen,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            status == null ? session.name : '${session.name} · ${status.label}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: colors?.foreground ?? What2EatTheme.darkGreenText,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DateFilterChip extends StatelessWidget {
   const _DateFilterChip({
+    super.key,
     required this.label,
     required this.selected,
     required this.onTap,
@@ -871,161 +1131,15 @@ class _DateFilterChip extends StatelessWidget {
   }
 }
 
-class _VendorDiscoveryCard extends StatelessWidget {
-  const _VendorDiscoveryCard({
-    super.key,
-    required this.vendor,
-    required this.sessions,
-    required this.onTap,
-  });
-
-  final VendorProfile vendor;
-  final List<MealSession> sessions;
-  final VoidCallback onTap;
+class _VendorLogoFallback extends StatelessWidget {
+  const _VendorLogoFallback();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: What2EatTheme.border),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.all(15),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: What2EatTheme.softSurfaceAlt,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.storefront_rounded,
-                      color: What2EatTheme.forestGreen,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            vendor.businessName,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: What2EatTheme.darkGreenText,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: What2EatTheme.softYellowBadge,
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.star_rounded,
-                                size: 13,
-                                color: What2EatTheme.darkGreenText,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                vendor.rating.toStringAsFixed(1),
-                                style: const TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: What2EatTheme.darkGreenText,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                vendor.businessDescription,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: What2EatTheme.mutedText,
-                ),
-              ),
-              if (sessions.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final session in (List<MealSession>.of(
-                      sessions,
-                    )..sort((a, b) => a.sortOrder.compareTo(b.sortOrder))))
-                      Container(
-                        key: ValueKey(
-                          'vendor-${vendor.id}-session-${session.id}',
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: What2EatTheme.softSurfaceAlt,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              session.icon,
-                              size: 16,
-                              color: What2EatTheme.forestGreen,
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              session.name,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: What2EatTheme.darkGreenText,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const Center(
+    child: Icon(
+      Icons.storefront_rounded,
+      color: What2EatTheme.forestGreen,
+      size: 28,
+    ),
+  );
 }

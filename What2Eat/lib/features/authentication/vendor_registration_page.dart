@@ -5,10 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../profile/user_profile.dart';
 import 'registration_validators.dart';
+import 'university_directory.dart';
 
 class VendorRegistrationPage extends StatefulWidget {
-  const VendorRegistrationPage({super.key});
+  const VendorRegistrationPage({super.key, this.loadUniversities});
+
+  /// Overrides the Supabase university directory (used by widget tests).
+  final UniversityLoader? loadUniversities;
   @override
   State<VendorRegistrationPage> createState() => _VendorRegistrationPageState();
 }
@@ -32,15 +37,35 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
     'Business Information',
     'Document Verification',
   ];
-  static const universities = [
-    'Universiti Teknologi Malaysia',
-    'Universiti Malaya',
-    'Universiti Putra Malaysia',
-    'Universiti Kebangsaan Malaysia',
-    'Universiti Sains Malaysia',
-    'Universiti Teknologi MARA',
-    'Other university',
-  ];
+  List<UniversityChoice> universities = [];
+  bool loadingUniversities = true, universityLoadFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    loadUniversities();
+  }
+
+  Future<void> loadUniversities() async {
+    setState(() {
+      loadingUniversities = true;
+      universityLoadFailed = false;
+    });
+    try {
+      final choices =
+          await (widget.loadUniversities ?? loadActiveUniversities)();
+      if (mounted) setState(() => universities = choices);
+    } catch (error) {
+      debugPrint('Could not load universities: $error');
+      if (mounted) setState(() => universityLoadFailed = true);
+    } finally {
+      if (mounted) setState(() => loadingUniversities = false);
+    }
+  }
+
+  String universityName(String id) =>
+      universities.where((u) => u.id == id).firstOrNull?.name ??
+      'Unavailable university';
 
   @override
   void dispose() {
@@ -202,19 +227,15 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
           'The vendor application was saved without a readable vendor record. Check the vendors SELECT policy for this account.',
         );
       }
-      final available = await client
-          .from('universities')
-          .select('id, name')
-          .eq('is_active', true);
+      // The selector stores university IDs from public.universities
+      // (including the "Other university" row), so they are linked directly.
+      // RLS only accepts active universities.
       final chosen = universityField.currentState!.value ?? <String>{};
-      final selected = (available as List)
-          .where((item) => chosen.contains(item['name']))
-          .map((item) =>
-              {'vendor_id': vendor['id'], 'university_id': item['id']})
+      final selected = chosen
+          .map((id) => {'vendor_id': vendor['id'], 'university_id': id})
           .toList();
       if (selected.isEmpty) {
-        throw const AuthException(
-            'No active selected universities were found.');
+        throw const AuthException('Select at least one university.');
       }
       await client.from('vendor_universities').upsert(
             selected,
@@ -693,6 +714,16 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
               InkWell(
                 borderRadius: BorderRadius.circular(14),
                 onTap: () async {
+                  if (loadingUniversities) {
+                    message('Loading universities. Please wait a moment.');
+                    return;
+                  }
+                  if (universityLoadFailed) {
+                    message('Could not load universities. Retrying…');
+                    await loadUniversities();
+                    if (universityLoadFailed) return;
+                  }
+                  if (!mounted) return;
                   final selected = Set<String>.of(state.value ?? {});
                   final result = await showDialog<Set<String>>(
                     context: context,
@@ -706,15 +737,15 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: universities
                                   .map(
-                                    (name) => CheckboxListTile(
+                                    (u) => CheckboxListTile(
                                       contentPadding: EdgeInsets.zero,
-                                      title: Text(name),
-                                      value: selected.contains(name),
+                                      title: Text(u.name),
+                                      value: selected.contains(u.id),
                                       onChanged: (checked) => update(() {
                                         if (checked == true) {
-                                          selected.add(name);
+                                          selected.add(u.id);
                                         } else {
-                                          selected.remove(name);
+                                          selected.remove(u.id);
                                         }
                                       }),
                                     ),
@@ -745,7 +776,11 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
                     suffixIcon: const Icon(Icons.arrow_drop_down),
                   ),
                   child: Text(
-                    state.value!.isEmpty
+                    loadingUniversities
+                        ? 'Loading universities…'
+                        : universityLoadFailed
+                        ? 'Could not load universities · Tap to retry'
+                        : state.value!.isEmpty
                         ? 'Select universities'
                         : '${state.value!.length} selected',
                   ),
@@ -756,11 +791,13 @@ class _VendorRegistrationPageState extends State<VendorRegistrationPage> {
                   spacing: 6,
                   children: state.value!
                       .map(
-                        (name) => InputChip(
-                          label:
-                              Text(name, style: const TextStyle(fontSize: 11)),
+                        (id) => InputChip(
+                          label: Text(
+                            universityName(id),
+                            style: const TextStyle(fontSize: 11),
+                          ),
                           onDeleted: () =>
-                              state.didChange({...state.value!}..remove(name)),
+                              state.didChange({...state.value!}..remove(id)),
                         ),
                       )
                       .toList(),

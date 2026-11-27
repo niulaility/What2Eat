@@ -8,15 +8,20 @@ import '../student/customer_dashboard_page.dart';
 import '../vendor/vendor_dashboard_page.dart';
 import '../admin/admin_dashboard_page.dart';
 
+import '../profile/user_profile.dart';
 import 'registration_validators.dart';
 import 'forgot_password_page.dart';
+import 'university_directory.dart';
 
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 
 class AuthPage extends StatefulWidget {
-  const AuthPage({super.key, this.registrationRole});
+  const AuthPage({super.key, this.registrationRole, this.loadUniversities});
   final String? registrationRole;
+
+  /// Overrides the Supabase university directory (used by widget tests).
+  final UniversityLoader? loadUniversities;
   @override
   State<AuthPage> createState() => _AuthPageState();
 }
@@ -41,6 +46,33 @@ class _AuthPageState extends State<AuthPage> {
   bool pickingPhoto = false;
   bool get register => widget.registrationRole != null;
   bool get vendor => widget.registrationRole == 'vendor';
+
+  /// Active universities from the database ("Other university" listed last).
+  List<UniversityChoice> universities = [];
+  bool loadingUniversities = false, universityLoadFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (register && !vendor) loadUniversities();
+  }
+
+  Future<void> loadUniversities() async {
+    setState(() {
+      loadingUniversities = true;
+      universityLoadFailed = false;
+    });
+    try {
+      final choices =
+          await (widget.loadUniversities ?? loadActiveUniversities)();
+      if (mounted) setState(() => universities = choices);
+    } catch (error) {
+      debugPrint('Could not load universities: $error');
+      if (mounted) setState(() => universityLoadFailed = true);
+    } finally {
+      if (mounted) setState(() => loadingUniversities = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -84,7 +116,9 @@ class _AuthPageState extends State<AuthPage> {
           'username': studentUsername.text.trim(),
           'full_name': studentFullName.text.trim(),
           'phone_number': studentPhone.text.trim(),
-          'university': university == 'other' ? null : university,
+          // University ID from public.universities (including the "Other
+          // university" row); the signup trigger links it to public.customers.
+          'university': university,
           'terms_accepted': true,
         },
       );
@@ -809,51 +843,48 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
+                        key: ValueKey(
+                          'university-${universities.length}-$loadingUniversities',
+                        ),
                         validator: (value) =>
                             value == null ? 'Select your university.' : null,
                         autovalidateMode: AutovalidateMode.onUserInteraction,
                         initialValue: university,
                         isExpanded: true,
-                        hint: const Text(
-                          'Select your university',
-                          style: TextStyle(fontSize: 14),
+                        hint: Text(
+                          loadingUniversities
+                              ? 'Loading universities…'
+                              : 'Select your university',
+                          style: const TextStyle(fontSize: 14),
                         ),
                         decoration: const InputDecoration(
                           prefixIcon: Icon(Icons.school_outlined, size: 20),
                         ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'utm',
-                            child: Text('Universiti Teknologi Malaysia'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'um',
-                            child: Text('Universiti Malaya'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'upm',
-                            child: Text('Universiti Putra Malaysia'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ukm',
-                            child: Text('Universiti Kebangsaan Malaysia'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'usm',
-                            child: Text('Universiti Sains Malaysia'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'uitm',
-                            child: Text('Universiti Teknologi MARA'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'other',
-                            child: Text('Other university'),
-                          ),
+                        items: [
+                          for (final u in universities)
+                            DropdownMenuItem(
+                              value: u.id,
+                              child: Text(
+                                u.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                         ],
-                        onChanged: (value) =>
-                            setState(() => university = value),
+                        onChanged: loadingUniversities
+                            ? null
+                            : (value) => setState(() => university = value),
                       ),
+                      if (universityLoadFailed)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: isRegistering ? null : loadUniversities,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text(
+                              'Could not load universities · Retry',
+                            ),
+                          ),
+                        ),
                       const SizedBox(height: 18),
                       field(
                         'Password',
