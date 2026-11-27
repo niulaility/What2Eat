@@ -6,6 +6,7 @@ import 'data/customer_menu_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'widgets/menu_food_image.dart';
+import 'widgets/customer_food_details_sheet.dart';
 
 class VendorSessionMenuPage extends StatefulWidget {
   const VendorSessionMenuPage({
@@ -28,6 +29,7 @@ class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
   CustomerMenu? _menu;
   String? _category, _error;
   bool _loading = true;
+  bool _foodOpen = false;
   Timer? _closing;
   int _request = 0;
 
@@ -51,6 +53,7 @@ class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
   }
 
   Future<void> _load() async {
+    if (_foodOpen) Navigator.of(context).pop();
     final request = ++_request;
     _closing?.cancel();
     setState(() {
@@ -92,10 +95,33 @@ class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
 
   void _expire() {
     if (!mounted) return;
+    if (_foodOpen) Navigator.of(context).pop();
     setState(() {
       _menu = null;
       _error = 'Ordering for this meal session has closed.';
     });
+  }
+
+  Future<void> _openFood(MenuItem item) async {
+    if (_foodOpen) return;
+    if (_menu?.window.isOpenAt(DateTime.now()) != true) {
+      _expire();
+      return;
+    }
+    _foodOpen = true;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: What2EatTheme.creamBackground,
+      builder: (_) => CustomerFoodDetailsSheet(
+        vendorId: widget.vendor.id,
+        menuId: widget.menu.menuId,
+        foodId: item.id,
+        repository: _repository,
+      ),
+    );
+    _foodOpen = false;
   }
 
   @override
@@ -206,7 +232,8 @@ class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
                         textAlign: TextAlign.center,
                       ),
                     ),
-                  for (final item in items) _FoodItemCard(item: item),
+                  for (final item in items)
+                    _FoodItemCard(item: item, onTap: () => _openFood(item)),
                 ],
               ),
             ),
@@ -232,8 +259,9 @@ class _VendorSessionMenuPageState extends State<VendorSessionMenuPage>
 }
 
 class _FoodItemCard extends StatelessWidget {
-  const _FoodItemCard({required this.item});
+  const _FoodItemCard({required this.item, required this.onTap});
   final MenuItem item;
+  final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
@@ -244,8 +272,9 @@ class _FoodItemCard extends StatelessWidget {
         side: const BorderSide(color: What2EatTheme.border),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Container(
+      child: InkWell(
         key: ValueKey('menu-food-${item.id}'),
+        onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(

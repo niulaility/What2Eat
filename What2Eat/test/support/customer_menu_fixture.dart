@@ -66,8 +66,31 @@ const browseItems = [
 
 class FakeMenuRepository extends CustomerMenuRepository {
   bool fail = false;
+  bool failFood = false;
+  int foodCalls = 0;
   List<MenuItem> items = browseItems;
   int calls = 0;
+  @override
+  Future<MenuItem> loadFood({
+    required String vendorId,
+    required String menuId,
+    required String foodId,
+  }) async {
+    foodCalls++;
+    if (failFood) {
+      throw const MenuBrowseFailure(
+        'Could not load this food item. Please try again.',
+      );
+    }
+    final matches = items.where((item) => item.id == foodId);
+    if (matches.isEmpty) {
+      throw const MenuBrowseFailure(
+        'This food item is no longer on this menu.',
+      );
+    }
+    return matches.single;
+  }
+
   @override
   Future<CustomerMenu> loadMenu({
     required String vendorId,
