@@ -122,6 +122,18 @@ class CustomizationGroup {
   final int? maxSelections;
 }
 
+class CustomerMenu {
+  const CustomerMenu({
+    required this.window,
+    required this.items,
+    required this.deliveryTimeRange,
+  });
+
+  final MenuSessionWindow window;
+  final List<MenuItem> items;
+  final String deliveryTimeRange;
+}
+
 class MenuItem {
   const MenuItem({
     required this.id,

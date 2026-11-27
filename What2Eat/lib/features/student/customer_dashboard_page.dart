@@ -9,6 +9,7 @@ import '../messaging/messaging_pages.dart';
 import '../messaging/messaging_repository.dart';
 import '../../shared/widgets/dashboard_backdrop.dart';
 import 'data/customer_discovery_repository.dart';
+import 'data/customer_menu_repository.dart';
 import 'models/customer_discovery_models.dart';
 import 'theme/what2eat_theme.dart';
 import 'vendor_profile_page.dart';
@@ -20,11 +21,13 @@ class CustomerDashboardPage extends StatefulWidget {
     required this.name,
     this.repository,
     this.messagingRepository,
+    this.menuRepository,
   });
 
   final String name;
   final CustomerDiscoveryRepository? repository;
   final MessagingRepository? messagingRepository;
+  final CustomerMenuRepository? menuRepository;
 
   @override
   State<CustomerDashboardPage> createState() => _CustomerDashboardPageState();
@@ -185,6 +188,7 @@ class _CustomerDashboardPageState extends State<CustomerDashboardPage> {
           universities: _universities,
           initialDate: _selectedDate,
           menus: _menusFor(vendor),
+          menuRepository: widget.menuRepository,
           messagingRepository: widget.messagingRepository,
         ),
       ),
