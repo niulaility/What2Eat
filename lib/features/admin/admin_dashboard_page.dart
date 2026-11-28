@@ -56,7 +56,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   Future<void> _openApplication(VendorApplication application) async {
-    await Navigator.of(context).push<void>(
+    // A non-null result is the confirmation of a saved review decision.
+    final decision = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => VendorApplicationDetailsPage(
           application: application,
@@ -64,7 +65,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
       ),
     );
-    if (mounted) _reloadApplications();
+    if (!mounted) return;
+    _reloadApplications();
+    if (decision != null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(decision),
+            duration: const Duration(seconds: 6),
+          ),
+        );
+    }
   }
 
   void _selectTab(int index) {
@@ -367,16 +379,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               ),
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              tab.label,
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.visible,
-                              textAlign: TextAlign.center,
-                              style: _text(
-                                12,
-                                color: _tabSelected(tab.label) ? _ink : _muted,
-                                weight: FontWeight.w600,
+                            // Shrinks a long label ("Universities") to its
+                            // own slot instead of wrapping or overlapping.
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                tab.label,
+                                maxLines: 1,
+                                textAlign: TextAlign.center,
+                                style: _text(
+                                  12,
+                                  color: _tabSelected(tab.label)
+                                      ? _ink
+                                      : _muted,
+                                  weight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ],

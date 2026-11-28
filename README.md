@@ -1,125 +1,150 @@
 # What2Eat
 
-Campus food pre-ordering app for university students, vendors and
-administrators, built with Flutter and Supabase.
+What2Eat is a campus food pre-ordering app. Students browse home-based and
+campus food vendors serving their university, check each vendor's menu for a
+meal session, and message vendors directly. Vendors apply with verification
+documents, and administrators review those applications before a vendor can
+start selling.
 
-## Project layout
+Built with **Flutter** (Android first) and **Supabase** (Postgres, Auth,
+Storage and Edge Functions).
 
-- `lib/` – Flutter app code, grouped by feature under `lib/features/`
-- `test/` – widget and unit tests (`flutter test`)
-- `supabase/` – database migrations, seed data and Edge Functions
-- `android/`, `ios/`, `macos/` – platform projects
-- `assets/` – bundled images
+## Features
 
-## Open in Android Studio
+### Students
+- Sign up with a university, then sign in with a username or email
+- Reset a forgotten password by email
+- Browse approved vendors serving their campus, filter by date and search by name
+- View vendor profiles, meal-session menus and food details with customizations
+- Message vendors in the app
+- Edit their profile and profile picture
 
-1. Clone the repository. Choose Open and select the repository root folder
-   (the one containing pubspec.yaml).
-2. Enable the Flutter and Dart plugins and select your Flutter SDK if prompted.
-3. Start an Android emulator in Device Manager.
-4. Open the Android Studio terminal and run:
+### Vendors
+- Apply in three steps: account, business details and verification documents
+- See application status while waiting for review, and get an email with the decision
+- Manage menus, food items, categories and customizations
+  *(in progress: changes currently stay on the device)*
+- Reply to student messages
 
-   ```powershell
-   flutter pub get
-   flutter devices
-   flutter run
-   ```
+### Administrators
+- Review vendor applications with their submitted documents
+- Approve or reject applications; the applicant is emailed the decision
+- Manage accounts and supported universities *(in progress: preview screens)*
 
-   If several devices are listed, select the Android emulator in the toolbar
-   and run lib/main.dart, or use flutter run -d followed by its device ID.
+## Tech stack
 
-The app opens the What2Eat login interface. Choose customer or vendor registration to create an account through Supabase. Email confirmation is required by the hosted project.
+| Area | Technology |
+| --- | --- |
+| App | Flutter 3.47 / Dart 3.13, Material 3 |
+| Backend | Supabase: Postgres with row-level security, Auth, Storage |
+| Server logic | Postgres functions and Supabase Edge Functions (Deno) |
+| Email | Resend, called from Edge Functions |
 
-## Windows Kotlin cache errors
+## Getting started
 
-`android/gradle.properties` disables Kotlin incremental compilation and runs the
-compiler in the Gradle process. This avoids the incremental-cache close errors
-seen in Android dependencies with this Windows checkout and its dependency
-cache. These settings apply to normal `flutter run` and APK builds; Kotlin
-compilation may take longer when dependency sources change.
+### Prerequisites
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) 3.47 or newer
+- Android Studio with an emulator, or an Android phone with USB debugging on
+- [Supabase CLI](https://supabase.com/docs/guides/cli) (only needed for backend changes)
 
-Password reset website source and deployment instructions are maintained in
-[Edwin0519/what2eat-password-reset](https://github.com/Edwin0519/what2eat-password-reset).
-The live page is https://what2eat-password-reset.vercel.app/ .
-A successful reset request does not prove email
-delivery; use an existing What2Eat customer account and verify the email link,
-password update, and subsequent sign-in before treating the flow as complete.
+### Run the app
 
-## Supabase setup
-
-Commit .env.example so everyone has the same template. Each teammate copies it
-to .env and fills in the Supabase project URL and publishable key for the team
-project. Keep .env out of Git and use only a publishable key in the app.
-
-The app reads `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` from
-`String.fromEnvironment`. The committed `.env.example` is JSON, so a local `.env`
-can be passed with `flutter run --dart-define-from-file=.env`.
-
-Apply the SQL files in `supabase/migrations` to the hosted project before
-registering users. To apply a pending migration manually, open the project's
-Supabase Dashboard, choose **SQL Editor**, create a query, paste the full SQL
-file contents, and run it. For this signup-trigger fix, run
-`supabase/migrations/20261116000005_harden_auth_user_trigger.sql`.
-
-To require administrator approval before vendor sign-in, also run
-`supabase/migrations/20261116000008_vendor_admin_approval.sql` and
-`supabase/migrations/20261116000009_vendor_signup_rate_limit.sql` and
-`supabase/migrations/20261116000010_protect_profile_roles.sql` and
-`supabase/migrations/20261116000011_remove_vendor_signup_rate_limit.sql`. Then open
-**Authentication → Hooks** in the Supabase Dashboard, add a **Custom Access
-Token** hook, and select `public.enforce_vendor_approval_for_auth`. Save and
-enable the hook. Pending and rejected vendors will be blocked from receiving
-new or refreshed access tokens; vendors without an application row can still
-finish registration. The vendor-only account creation function confirms new
-vendor email addresses server-side, so leave the project's global email
-confirmation setting enabled for students. The admin dashboard can inspect
-submitted documents and approve or reject pending applications.
-
-To email vendors when their applications are received, set the Edge Function
-secrets in the linked Supabase project and deploy the function:
-
-```powershell
-supabase secrets set RESEND_API_KEY=re_your_resend_api_key RESEND_FROM_EMAIL="What2Eat <no-reply@auth.w11x.my>"
-supabase functions deploy vendor-create-account --no-verify-jwt
-supabase functions deploy vendor-application-received
-supabase functions deploy vendor-review-notification
+```bash
+git clone https://github.com/niulaility/What2Eat.git
+cd What2Eat
+flutter pub get
+flutter run
 ```
 
-Use the Resend API key as `RESEND_API_KEY`; do not put it in the Flutter app or
-`.env`. Supabase injects the service-role key into Edge Functions; it must never
-be added to the app. The sender address must belong to the verified sending
-domain in Resend. The account-creation function uses the service-role key only
-on the server. The receipt function sends
-only to the authenticated vendor's own email after their pending application
-has been saved. The review-notification function sends the approval or rejection
-decision to the vendor after an administrator reviews the application. If that
-email fails, the review remains saved and the admin dashboard shows a warning.
+The app connects to the team's hosted Supabase project by default. To point it
+at another project, copy `.env.example` to `.env`, fill in that project's URL
+and **publishable** key, and run:
 
-The publishable key only connects the app to Supabase APIs; it cannot apply
-database migrations. After applying SQL, fully restart the app and retry signup.
+```bash
+flutter run --dart-define-from-file=.env
+```
 
-## Password reset
+`.env` is ignored by Git. Never put a service-role or secret key in the app.
 
-The **Forgot password?** flow sends a Supabase Auth recovery email and returns
-the customer to the app to set a new password. In the Supabase Dashboard, open
-**Authentication → URL Configuration** and add this exact value to **Redirect
-URLs**:
+In Android Studio, choose **Open** and select the repository root (the folder
+containing `pubspec.yaml`).
+
+## Project structure
 
 ```text
-what2eat://login-callback/
+lib/
+  main.dart               App entry point and Supabase setup
+  features/
+    authentication/       Sign in, registration, password reset
+    student/              Vendor discovery, menus and food details
+    vendor/               Vendor dashboard, menus and food editor
+    admin/                Application reviews, accounts, universities
+    messaging/            Student–vendor chat
+    profile/              Account and profile editing
+  shared/                 Widgets shared across features
+supabase/
+  migrations/             Database schema, policies and functions
+  functions/              Edge Functions (vendor sign-up and emails)
+  seed.sql                Test accounts for a local database
+test/                     Widget and unit tests
+tools/                    Backend security test scripts
 ```
 
-Keep the Supabase Auth password recovery email template enabled and use its
-`{{ .ConfirmationURL }}` link (or the dashboard's equivalent default recovery
-link). Supabase verifies the one-time recovery link before the app displays the
-new-password form. Unknown email addresses receive the same in-app confirmation
-message as registered accounts to avoid account enumeration. Supabase's Auth
-rate limits remain in force, with an additional short resend cooldown in the
-app.
+## Backend setup
 
-The redirect can be overridden for a different app scheme with
-`--dart-define=PASSWORD_RESET_REDIRECT_URL=your-scheme://login-callback/`; add
-that exact redirect to the Supabase allow-list and register the matching native
-URL scheme before using it.
+Only needed when setting up a new Supabase project or changing the backend.
 
+1. **Database:** apply every file in `supabase/migrations` in order. With the
+   CLI linked to the project, run `supabase db push`. Alternatively, paste each
+   file into the Supabase Dashboard's **SQL Editor** and run it.
+2. **Vendor approval hook:** in **Authentication → Hooks**, add a **Custom
+   Access Token** hook using `public.enforce_vendor_approval_for_auth`. This
+   stops pending and rejected vendors from signing in.
+3. **Email confirmation:** keep it enabled for students. Vendor accounts are
+   confirmed by the `vendor-create-account` function instead.
+4. **Password reset redirect:** in **Authentication → URL Configuration**, add
+   `what2eat://login-callback/` to **Redirect URLs**.
+5. **Edge Functions and email:**
 
+   ```bash
+   supabase secrets set RESEND_API_KEY=re_your_key RESEND_FROM_EMAIL="What2Eat <no-reply@your-domain>"
+   supabase functions deploy vendor-create-account --no-verify-jwt
+   supabase functions deploy vendor-application-received
+   supabase functions deploy vendor-review-notification
+   ```
+
+   The sender address must belong to a domain verified in Resend. Keep the
+   Resend key in Supabase secrets only, never in the app.
+
+`supabase/seed.sql` creates an admin, a student and a vendor account for local
+development. The login details are in that file.
+
+## Testing
+
+```bash
+flutter analyze
+flutter test
+```
+
+Widget tests use fake repositories and never touch the hosted database.
+
+## Troubleshooting
+
+- **Kotlin "incremental cache" errors on Windows:** `android/gradle.properties`
+  already turns off Kotlin incremental compilation to avoid them. Builds can be
+  slower after dependency changes.
+- **Sign-up fails with "Supabase could not save the new account":** a migration
+  is missing on the project. Apply all files in `supabase/migrations`, then
+  fully restart the app.
+- **Password reset email arrives but the link does nothing:** check the
+  redirect URL in step 4 of the backend setup.
+
+## Related
+
+- Password reset web page:
+  [Edwin0519/what2eat-password-reset](https://github.com/Edwin0519/what2eat-password-reset)
+  (live at https://what2eat-password-reset.vercel.app/)
+
+## License
+
+Released under the [GNU General Public License v3.0](LICENSE).
