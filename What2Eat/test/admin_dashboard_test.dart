@@ -2,17 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:what2eat_starter/features/admin/admin_dashboard_page.dart';
 import 'package:what2eat_starter/features/admin/vendor_application_details_page.dart';
-import 'package:what2eat_starter/features/admin/vendor_application_preview_data.dart';
+import 'package:what2eat_starter/features/admin/vendor_application_repository.dart';
 import 'package:what2eat_starter/features/profile/account_page.dart';
 import 'package:what2eat_starter/features/profile/edit_profile_page.dart';
 
 import 'support/profile_fixture.dart';
+import 'support/vendor_application_fixture.dart';
 
 Future<void> openDashboard(
   WidgetTester tester, {
   double width = 411,
   double scale = 1,
   SampleProfileRepository? repository,
+  FakeVendorApplicationRepository? applications,
 }) async {
   tester.view.physicalSize = Size(width, 891);
   tester.view.devicePixelRatio = 1;
@@ -28,6 +30,8 @@ Future<void> openDashboard(
       home: AdminDashboardPage(
         name: 'Admin Test',
         profileRepository: repository,
+        applicationRepository:
+            applications ?? FakeVendorApplicationRepository(),
       ),
     ),
   );
@@ -42,27 +46,27 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('admin-tab-Reviews')));
       await tester.pumpAndSettle();
       expect(find.text('Vendor application reviews'), findsOneWidget);
-      expect(find.byKey(const ValueKey('review-W2E-V-0001')), findsOneWidget);
-      expect(find.byKey(const ValueKey('review-W2E-V-0006')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-app-001')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-app-006')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('reviews-filter-approved')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('review-W2E-V-0001')), findsNothing);
-      expect(find.byKey(const ValueKey('review-W2E-V-0004')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-app-001')), findsNothing);
+      expect(find.byKey(const ValueKey('review-app-004')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('reviews-filter-rejected')));
       await tester.pumpAndSettle();
-      final rejected = find.byKey(const ValueKey('review-W2E-V-0006'));
+      final rejected = find.byKey(const ValueKey('review-app-006'));
       await tester.ensureVisible(rejected);
       await tester.tap(rejected);
       await tester.pumpAndSettle();
-      expect(find.text('Sample application · Rejected'), findsOneWidget);
+      expect(find.text('Status · Rejected'), findsOneWidget);
       expect(find.text('Reason for rejection'), findsOneWidget);
       expect(find.byKey(const ValueKey('approve-application')), findsNothing);
       await tester.pageBack();
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reviews-filter-pending')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('review-W2E-V-0001')), findsOneWidget);
-      expect(find.byKey(const ValueKey('review-W2E-V-0006')), findsNothing);
+      expect(find.byKey(const ValueKey('review-app-001')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-app-006')), findsNothing);
     },
   );
 
@@ -122,9 +126,15 @@ void main() {
     tester,
   ) async {
     await openDashboard(tester);
-    final third = find.byKey(const ValueKey('admin-application-003'));
-    expect(find.byKey(const ValueKey('admin-application-001')), findsOneWidget);
-    expect(find.byKey(const ValueKey('admin-application-002')), findsOneWidget);
+    final third = find.byKey(const ValueKey('admin-application-app-003'));
+    expect(
+      find.byKey(const ValueKey('admin-application-app-001')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-application-app-002')),
+      findsOneWidget,
+    );
     expect(third, findsNothing);
     expect(find.byKey(const ValueKey('admin-welcome-panel')), findsNothing);
     expect(find.byKey(const ValueKey('new-accounts-panel')), findsOneWidget);
@@ -133,7 +143,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text(vendorApplicationPreviews.first.campuses.first),
+      find.text(sampleApplications.first.universities.first),
       findsNothing,
     );
     expect(find.text('Pending review'), findsNothing);
@@ -159,7 +169,7 @@ void main() {
           isNull,
         );
       }
-      final card = find.byKey(const ValueKey('admin-application-001'));
+      final card = find.byKey(const ValueKey('admin-application-app-001'));
       await tester.tap(card);
       await tester.pumpAndSettle();
       expect(find.byType(VendorApplicationDetailsPage), findsOneWidget);
@@ -173,10 +183,10 @@ void main() {
       expect(
         fields,
         containsAll([
-          vendorApplicationPreviews.first.owner,
-          vendorApplicationPreviews.first.email,
-          vendorApplicationPreviews.first.address,
-          vendorApplicationPreviews.first.description,
+          sampleApplications.first.owner,
+          sampleApplications.first.email,
+          sampleApplications.first.address,
+          sampleApplications.first.description,
         ]),
       );
       expect(
@@ -201,45 +211,108 @@ void main() {
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('admin-application-001')),
+        find.byKey(const ValueKey('admin-application-app-001')),
         findsOneWidget,
       );
     },
   );
 
   for (final size in [(320.0, 1.0), (411.0, 1.4)]) {
-    testWidgets(
-      'Sample application details and document preview fit ${size.$1}',
-      (tester) async {
-        await openDashboard(tester, width: size.$1, scale: size.$2);
-        final card = find.byKey(const ValueKey('admin-application-001'));
-        await tester.ensureVisible(card);
-        await tester.tap(card);
-        await tester.pumpAndSettle();
-        final document = find.byKey(const ValueKey('document-ic-front'));
-        await tester.scrollUntilVisible(
-          document,
-          300,
-          scrollable: find
-              .descendant(
-                of: find.byKey(const ValueKey('application-details-scroll')),
-                matching: find.byType(Scrollable),
-              )
-              .first,
-        );
-        await tester.tap(document);
-        await tester.pumpAndSettle();
-        expect(find.text('Sample document 1'), findsOneWidget);
-        await tester.tap(find.text('Close'));
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('approve-application')).hitTestable(),
-          findsOneWidget,
-        );
-        expect(tester.takeException(), isNull);
-      },
-    );
+    testWidgets('Application details and document viewer fit ${size.$1}', (
+      tester,
+    ) async {
+      await openDashboard(tester, width: size.$1, scale: size.$2);
+      final card = find.byKey(const ValueKey('admin-application-app-001'));
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      final document = find.byKey(const ValueKey('document-ic_front'));
+      await tester.scrollUntilVisible(
+        document,
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('application-details-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.tap(document);
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load this file.'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('approve-application')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
   }
+
+  testWidgets('Documents show counts, missing files and request signed URLs', (
+    tester,
+  ) async {
+    final applications = FakeVendorApplicationRepository();
+    await openDashboard(tester, applications: applications);
+    await tester.tap(find.byKey(const ValueKey('admin-application-app-001')));
+    await tester.pumpAndSettle();
+    final scroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('application-details-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final kitchen = find.byKey(const ValueKey('document-kitchen'));
+    await tester.scrollUntilVisible(kitchen, 300, scrollable: scroll);
+    expect(find.text('2 files · Required'), findsOneWidget);
+    expect(find.text('1 file · Required'), findsOneWidget);
+    expect(find.text('Not provided · Required'), findsNWidgets(3));
+    expect(find.text('Not provided · Optional'), findsNWidgets(2));
+    await tester.tap(kitchen);
+    await tester.pumpAndSettle();
+    expect(applications.requestedPaths, ['u/k0.jpg', 'u/k1.jpg']);
+    expect(find.text('Could not load this file.'), findsNWidgets(2));
+    await tester.tap(find.text('Retry').first);
+    await tester.pumpAndSettle();
+    expect(applications.requestedPaths, hasLength(3));
+  });
+
+  test('Application dates use 12-hour time and never split', () {
+    String plain(DateTime d) => formatApplicationDate(d).replaceAll(' ', ' ');
+    expect(plain(DateTime(2026, 11, 29, 0, 55)), '29 Nov 2026 · 12:55 AM');
+    expect(plain(DateTime(2026, 1, 3, 12, 5)), '3 Jan 2026 · 12:05 PM');
+    expect(plain(DateTime(2026, 12, 31, 23, 59)), '31 Dec 2026 · 11:59 PM');
+    expect(formatApplicationDate(DateTime(2026)), contains('12:00 AM'));
+  });
+
+  testWidgets('Load failure shows retry and recovers', (tester) async {
+    final applications = FakeVendorApplicationRepository()
+      ..failure = const VendorApplicationFailure('Network down.');
+    await openDashboard(tester, applications: applications);
+    expect(find.text('Network down.'), findsOneWidget);
+    applications.failure = null;
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('admin-application-app-001')), findsOne);
+    expect(applications.loads, 2);
+  });
+
+  testWidgets('No pending applications shows an empty state', (tester) async {
+    await openDashboard(
+      tester,
+      applications: FakeVendorApplicationRepository([
+        sampleApplication('a1', status: ApplicationReviewStatus.approved),
+      ]),
+    );
+    expect(find.byKey(const ValueKey('no-pending-applications')), findsOne);
+    expect(find.byKey(const ValueKey('toggle-applications')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('admin-tab-Reviews')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reviews-filter-pending')));
+    await tester.pumpAndSettle();
+    expect(find.text('No pending applications.'), findsOneWidget);
+  });
 
   testWidgets(
     'Existing profile editing and save remain accessible at top right',
