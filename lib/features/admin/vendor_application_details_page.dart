@@ -49,14 +49,27 @@ class VendorApplicationDetailsPage extends StatelessWidget {
   final VendorApplication application;
   final VendorApplicationRepository repository;
 
-  Future<void> _previewDecision(BuildContext context, bool approve) =>
-      showDialog<void>(
-        context: context,
-        builder: (_) => _DecisionPreview(
-          approve: approve,
-          business: application.businessName,
-        ),
-      );
+  /// Opens the decision dialog. When the decision is saved, closes this page
+  /// and returns the confirmation message to the dashboard.
+  Future<void> _decide(BuildContext context, bool approve) async {
+    final missing = vendorDocumentTypes
+        .where((t) => !t.optional && application.documentsOf(t.type).isEmpty)
+        .map((t) => t.title)
+        .toList();
+    final message = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _DecisionDialog(
+        approve: approve,
+        application: application,
+        repository: repository,
+        missingRequired: missing,
+      ),
+    );
+    if (message != null && context.mounted) {
+      Navigator.of(context).pop(message);
+    }
+  }
 
   Future<void> _document(
     BuildContext context,
@@ -251,16 +264,6 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'Preview actions · Application stays pending',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.4,
-                        color: _green,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
                     Row(
                       children: [
                         Expanded(
@@ -271,7 +274,7 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                               foregroundColor: const Color(0xFFAC3530),
                               side: const BorderSide(color: Color(0xFFAC3530)),
                             ),
-                            onPressed: () => _previewDecision(context, false),
+                            onPressed: () => _decide(context, false),
                             child: const Text(
                               'Reject',
                               style: TextStyle(fontSize: 16),
@@ -287,7 +290,7 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                               backgroundColor: const Color(0xFFFFD85C),
                               foregroundColor: _ink,
                             ),
-                            onPressed: () => _previewDecision(context, true),
+                            onPressed: () => _decide(context, true),
                             child: const Text(
                               'Approve',
                               style: TextStyle(fontSize: 16),
@@ -312,11 +315,13 @@ class VendorApplicationDetailsPage extends StatelessWidget {
       leading: Icon(
         files.isEmpty
             ? (type.optional
-                  ? Icons.file_present_outlined
+                  ? Icons.remove_circle_outline
                   : Icons.error_outline)
             : Icons.description_outlined,
-        color: files.isEmpty && !type.optional
-            ? const Color(0xFFAC3530)
+        color: files.isEmpty
+            ? (type.optional
+                  ? const Color(0xFF92978B)
+                  : const Color(0xFFAC3530))
             : _green,
       ),
       title: Text(
@@ -460,74 +465,156 @@ class _Field extends StatelessWidget {
   );
 }
 
-class _DecisionPreview extends StatefulWidget {
-  const _DecisionPreview({required this.approve, required this.business});
+/// Confirms a decision, saves it, then emails the applicant. Pops with the
+/// confirmation message once the decision is saved.
+class _DecisionDialog extends StatefulWidget {
+  const _DecisionDialog({
+    required this.approve,
+    required this.application,
+    required this.repository,
+    required this.missingRequired,
+  });
   final bool approve;
-  final String business;
+  final VendorApplication application;
+  final VendorApplicationRepository repository;
+  final List<String> missingRequired;
   @override
-  State<_DecisionPreview> createState() => _DecisionPreviewState();
+  State<_DecisionDialog> createState() => _DecisionDialogState();
 }
 
-class _DecisionPreviewState extends State<_DecisionPreview> {
+class _DecisionDialogState extends State<_DecisionDialog> {
   final _form = GlobalKey<FormState>();
+  final _reason = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.approve ? 'Approve application?' : 'Reject application?',
-    ),
-    scrollable: true,
-    content: Form(
-      key: _form,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            widget.business,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'This is an interface preview. No status will change, no account will be activated, and no email will be sent.',
-          ),
-          if (!widget.approve) ...[
-            const SizedBox(height: 16),
-            TextFormField(
-              minLines: 3,
-              maxLines: 5,
-              maxLength: 500,
-              decoration: const InputDecoration(
-                labelText: 'Reason for rejection',
-                alignLabelWithHint: true,
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) => (value ?? '').trim().isEmpty
-                  ? 'Enter a reason for the applicant.'
-                  : null,
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_saving || !_form.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final application = widget.application;
+    try {
+      await widget.repository.reviewApplication(
+        application.id,
+        approve: widget.approve,
+        rejectionReason: widget.approve ? null : _reason.text,
+      );
+    } on VendorApplicationFailure catch (failure) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = failure.message;
+        });
+      }
+      return;
+    }
+    // The decision is saved; a failed email must not undo or hide it.
+    final emailed = await widget.repository.sendReviewNotice(application.id);
+    if (!mounted) return;
+    final decision = widget.approve ? 'approved' : 'rejected';
+    Navigator.of(context).pop(
+      emailed
+          ? '${application.businessName} was $decision. The applicant was emailed.'
+          : '${application.businessName} was $decision, but the email could not '
+                'be sent. Please let the applicant know at ${application.email}.',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: AlertDialog(
+      title: Text(
+        widget.approve ? 'Approve application?' : 'Reject application?',
+      ),
+      scrollable: true,
+      content: Form(
+        key: _form,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.application.businessName,
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
+            const SizedBox(height: 12),
+            Text(
+              widget.approve
+                  ? 'The vendor account will be activated, the business will be visible to students, and the applicant will be emailed.'
+                  : 'The applicant will not be able to sign in and will be emailed this reason.',
+            ),
+            if (widget.approve && widget.missingRequired.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Missing required documents: ${widget.missingRequired.join(', ')}.',
+                key: const ValueKey('missing-documents-warning'),
+                style: const TextStyle(color: Color(0xFFAC3530)),
+              ),
+            ],
+            if (!widget.approve) ...[
+              const SizedBox(height: 16),
+              TextFormField(
+                key: const ValueKey('rejection-reason'),
+                controller: _reason,
+                enabled: !_saving,
+                minLines: 3,
+                maxLines: 5,
+                maxLength: 500,
+                // Clears the error as soon as a reason is typed.
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                decoration: const InputDecoration(
+                  labelText: 'Reason for rejection',
+                  alignLabelWithHint: true,
+                  border: OutlineInputBorder(),
+                  errorMaxLines: 3,
+                ),
+                validator: (value) => (value ?? '').trim().isEmpty
+                    ? 'Enter a reason for the applicant.'
+                    : null,
+              ),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                key: const ValueKey('decision-error'),
+                style: const TextStyle(color: Color(0xFFAC3530)),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirm-decision'),
+          onPressed: _saving ? null : _submit,
+          style: widget.approve
+              ? null
+              : FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFAC3530),
+                ),
+          child: _saving
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(widget.approve ? 'Approve' : 'Reject'),
+        ),
+      ],
     ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(
-        onPressed: () {
-          if (!_form.currentState!.validate()) return;
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Preview complete. The application is still pending.',
-              ),
-            ),
-          );
-        },
-        child: const Text('Confirm preview'),
-      ),
-    ],
   );
 }

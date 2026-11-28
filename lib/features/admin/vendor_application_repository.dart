@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum ApplicationReviewStatus { pending, approved, rejected }
@@ -153,6 +156,18 @@ abstract class VendorApplicationRepository {
 
   /// A short-lived URL for a file in the private `vendor-documents` bucket.
   Future<String> documentUrl(String path);
+
+  /// Approves or rejects a pending application. A [rejectionReason] is
+  /// required when rejecting. Approval activates the vendor account.
+  Future<void> reviewApplication(
+    String applicationId, {
+    required bool approve,
+    String? rejectionReason,
+  });
+
+  /// Emails the applicant the saved decision. Returns false instead of
+  /// throwing: the decision is already saved when this runs.
+  Future<bool> sendReviewNotice(String applicationId);
 }
 
 class SupabaseVendorApplicationRepository
@@ -201,6 +216,65 @@ class SupabaseVendorApplicationRepository
           .timeout(const Duration(seconds: 20));
     } on Exception {
       throw const VendorApplicationFailure('Could not open this document.');
+    }
+  }
+
+  @override
+  Future<void> reviewApplication(
+    String applicationId, {
+    required bool approve,
+    String? rejectionReason,
+  }) async {
+    try {
+      // The RPC is admin-only and only changes applications still pending.
+      await _client
+          .rpc(
+            'review_vendor_application',
+            params: {
+              'p_vendor_id': applicationId,
+              'p_decision': approve ? 'approved' : 'rejected',
+              'p_rejection_reason': approve ? null : rejectionReason?.trim(),
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+    } on PostgrestException catch (error) {
+      throw VendorApplicationFailure(switch (error.code) {
+        'P0002' =>
+          'This application was already reviewed. Refresh to see its status.',
+        '42501' => 'Only administrators can review vendor applications.',
+        '22023' => 'Enter a reason for the applicant.',
+        _ => 'Could not save the decision. Please try again.',
+      });
+    } on TimeoutException {
+      // The request may still have reached the server; retrying blindly
+      // would report "already reviewed" and skip the applicant's email.
+      throw const VendorApplicationFailure(
+        'The server did not respond in time, so the decision may or may not '
+        'have been saved. Go back and refresh to check its status.',
+      );
+    } on Exception {
+      throw const VendorApplicationFailure(
+        'Could not save the decision. Check your connection and try again.',
+      );
+    }
+  }
+
+  @override
+  Future<bool> sendReviewNotice(String applicationId) async {
+    try {
+      final response = await _client.functions
+          .invoke(
+            'vendor-review-notification',
+            body: {'vendor_id': applicationId},
+          )
+          .timeout(const Duration(seconds: 20));
+      return response.status >= 200 &&
+          response.status < 300 &&
+          response.data is Map &&
+          response.data['sent'] == true;
+    } on Exception catch (error) {
+      debugPrint('Vendor review email failed: $error');
+      return false;
     }
   }
 }

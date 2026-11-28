@@ -73,4 +73,40 @@ class FakeVendorApplicationRepository implements VendorApplicationRepository {
     // Never fetched by the test image provider; errors render the retry state.
     throw const VendorApplicationFailure('Could not open this document.');
   }
+
+  /// Thrown by [reviewApplication] when set.
+  VendorApplicationFailure? reviewFailure;
+  bool emailSent = true;
+  final reviews = <({String id, bool approve, String? reason})>[];
+  final notices = <String>[];
+
+  @override
+  Future<void> reviewApplication(
+    String applicationId, {
+    required bool approve,
+    String? rejectionReason,
+  }) async {
+    if (reviewFailure != null) throw reviewFailure!;
+    reviews.add((id: applicationId, approve: approve, reason: rejectionReason));
+    applications = [
+      for (final a in applications)
+        a.id != applicationId
+            ? a
+            : sampleApplication(
+                a.id,
+                business: a.businessName,
+                status: approve
+                    ? ApplicationReviewStatus.approved
+                    : ApplicationReviewStatus.rejected,
+                rejectionReason: rejectionReason,
+                documents: a.documents,
+              ),
+    ];
+  }
+
+  @override
+  Future<bool> sendReviewNotice(String applicationId) async {
+    notices.add(applicationId);
+    return emailSent;
+  }
 }

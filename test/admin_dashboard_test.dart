@@ -160,9 +160,10 @@ void main() {
   });
 
   testWidgets(
-    'Application details open while other management tabs remain previews',
+    'Rejecting requires a reason, saves it and reports a failed email',
     (tester) async {
-      await openDashboard(tester);
+      final repo = FakeVendorApplicationRepository()..emailSent = false;
+      await openDashboard(tester, applications: repo);
       for (final tab in ['Settings']) {
         expect(
           tester.widget<InkWell>(find.byKey(ValueKey('admin-tab-$tab'))).onTap,
@@ -195,27 +196,137 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('reject-application')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Confirm preview'));
+      await tester.tap(find.byKey(const ValueKey('confirm-decision')));
       await tester.pumpAndSettle();
       expect(find.text('Enter a reason for the applicant.'), findsOneWidget);
+      expect(repo.reviews, isEmpty);
       await tester.enterText(
-        find.byType(TextFormField),
+        find.byKey(const ValueKey('rejection-reason')),
+        '  Please supply a clearer document.  ',
+      );
+      await tester.pump();
+      expect(find.text('Enter a reason for the applicant.'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('confirm-decision')));
+      await tester.pumpAndSettle();
+      expect(repo.reviews.single.id, 'app-001');
+      expect(repo.reviews.single.approve, isFalse);
+      expect(
+        repo.reviews.single.reason?.trim(),
         'Please supply a clearer document.',
       );
-      await tester.tap(find.text('Confirm preview'));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Preview complete. The application is still pending.'),
-        findsOneWidget,
-      );
-      await tester.pageBack();
-      await tester.pumpAndSettle();
+      expect(repo.notices, ['app-001']);
+      // Back on the dashboard: card removed, warning names the email.
+      expect(find.byType(VendorApplicationDetailsPage), findsNothing);
       expect(
         find.byKey(const ValueKey('admin-application-app-001')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.textContaining('email could not be sent'), findsOneWidget);
+      expect(find.textContaining('app-001@example.test'), findsOneWidget);
     },
   );
+
+  testWidgets('Approving warns about missing documents and confirms', (
+    tester,
+  ) async {
+    final repo = FakeVendorApplicationRepository();
+    await openDashboard(tester, applications: repo);
+    await tester.tap(find.byKey(const ValueKey('admin-application-app-001')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('approve-application')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Missing required documents: IC Photo — Back, Selfie with IC, '
+        'Typhoid Vaccination Evidence.',
+      ),
+      findsOneWidget,
+    );
+    // Cancel leaves the application untouched.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(repo.reviews, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('approve-application')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-decision')));
+    await tester.pumpAndSettle();
+    expect(repo.reviews.single.approve, isTrue);
+    expect(repo.reviews.single.reason, isNull);
+    expect(
+      find.text(
+        'Fresh Campus Kitchen was approved. The applicant was emailed.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('admin-tab-Reviews')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reviews-filter-approved')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('review-app-001')), findsOneWidget);
+  });
+
+  for (final size in [(320.0, 1.6), (411.0, 2.0)]) {
+    testWidgets('Decision dialogs fit ${size.$1} at ${size.$2}x text', (
+      tester,
+    ) async {
+      final repo = FakeVendorApplicationRepository()
+        ..reviewFailure = const VendorApplicationFailure(
+          'The server did not respond in time, so the decision may or may '
+          'not have been saved. Go back and refresh to check its status.',
+        );
+      await openDashboard(
+        tester,
+        width: size.$1,
+        scale: size.$2,
+        applications: repo,
+      );
+      final card = find.byKey(const ValueKey('admin-application-app-001'));
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      for (final button in ['approve-application', 'reject-application']) {
+        await tester.tap(find.byKey(ValueKey(button)));
+        await tester.pumpAndSettle();
+        if (button == 'reject-application') {
+          await tester.enterText(
+            find.byKey(const ValueKey('rejection-reason')),
+            'Documents unreadable',
+          );
+        }
+        final confirm = find.byKey(const ValueKey('confirm-decision'));
+        await tester.ensureVisible(confirm);
+        await tester.tap(confirm);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('decision-error')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('A failed decision stays on the page and shows why', (
+    tester,
+  ) async {
+    final repo = FakeVendorApplicationRepository()
+      ..reviewFailure = const VendorApplicationFailure(
+        'This application was already reviewed. Refresh to see its status.',
+      );
+    await openDashboard(tester, applications: repo);
+    await tester.tap(find.byKey(const ValueKey('admin-application-app-001')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('approve-application')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-decision')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('decision-error')), findsOneWidget);
+    expect(find.textContaining('already reviewed'), findsOneWidget);
+    expect(repo.notices, isEmpty);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.byType(VendorApplicationDetailsPage), findsOneWidget);
+  });
 
   for (final size in [(320.0, 1.0), (411.0, 1.4)]) {
     testWidgets('Application details and document viewer fit ${size.$1}', (
