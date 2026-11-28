@@ -1,19 +1,109 @@
 import 'package:flutter/material.dart';
 
 import 'vendor_application_details_page.dart';
-import 'vendor_application_preview_data.dart';
+import 'vendor_application_repository.dart';
+
+const _ink = Color(0xFF253729);
+const _green = Color(0xFF344B35);
+const _muted = Color(0xFF596451);
+
+/// Shows a spinner, an error with retry, or [builder] with the loaded
+/// applications.
+class ApplicationsLoader extends StatelessWidget {
+  const ApplicationsLoader({
+    super.key,
+    required this.applications,
+    required this.onRetry,
+    required this.builder,
+  });
+  final Future<List<VendorApplication>> applications;
+  final VoidCallback onRetry;
+  final Widget Function(List<VendorApplication> applications) builder;
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<VendorApplication>>(
+    future: applications,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return Padding(
+          key: const ValueKey('applications-error'),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            children: [
+              const Icon(Icons.cloud_off_outlined, color: _green, size: 36),
+              const SizedBox(height: 8),
+              Text(
+                snapshot.error is VendorApplicationFailure
+                    ? snapshot.error.toString()
+                    : 'Could not load vendor applications.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: _muted),
+              ),
+              TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        );
+      }
+      if (!snapshot.hasData) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      return builder(snapshot.data!);
+    },
+  );
+}
 
 class AdminReviewsPage extends StatefulWidget {
-  const AdminReviewsPage({super.key});
+  const AdminReviewsPage({
+    super.key,
+    required this.applications,
+    required this.onOpen,
+    required this.onRetry,
+  });
+  final Future<List<VendorApplication>> applications;
+  final ValueChanged<VendorApplication> onOpen;
+  final VoidCallback onRetry;
   @override
   State<AdminReviewsPage> createState() => _AdminReviewsPageState();
 }
 
 class _AdminReviewsPageState extends State<AdminReviewsPage> {
   ApplicationReviewStatus? _status;
+
   @override
-  Widget build(BuildContext context) {
-    final applications = vendorApplicationPreviews
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        'Vendor application reviews',
+        style: TextStyle(
+          fontSize: 25,
+          fontWeight: FontWeight.w600,
+          color: _ink,
+        ),
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Browse applications by their review status.',
+        style: TextStyle(fontSize: 14, color: _muted),
+      ),
+      const SizedBox(height: 20),
+      ApplicationsLoader(
+        applications: widget.applications,
+        onRetry: widget.onRetry,
+        builder: _list,
+      ),
+    ],
+  );
+
+  Widget _list(List<VendorApplication> all) {
+    final shown = all
         .where(
           (application) => _status == null || application.status == _status,
         )
@@ -21,27 +111,13 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Vendor application reviews',
-          style: TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF253729),
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Text(
-          'Browse applications by their review status.',
-          style: TextStyle(fontSize: 14, color: Color(0xFF596451)),
-        ),
-        const SizedBox(height: 20),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
             ChoiceChip(
               key: const ValueKey('reviews-filter-all'),
-              label: Text('All (${vendorApplicationPreviews.length})'),
+              label: Text('All (${all.length})'),
               selected: _status == null,
               selectedColor: const Color(0xFFFFD85C),
               onSelected: (_) => setState(() => _status = null),
@@ -50,7 +126,7 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
               ChoiceChip(
                 key: ValueKey('reviews-filter-${status.name}'),
                 label: Text(
-                  '${status.name[0].toUpperCase()}${status.name.substring(1)} (${vendorApplicationPreviews.where((application) => application.status == status).length})',
+                  '${status.name[0].toUpperCase()}${status.name.substring(1)} (${all.where((application) => application.status == status).length})',
                 ),
                 selected: _status == status,
                 selectedColor: const Color(0xFFFFD85C),
@@ -59,7 +135,18 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
           ],
         ),
         const SizedBox(height: 20),
-        for (final application in applications)
+        if (shown.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              _status == null
+                  ? 'No vendor applications have been submitted yet.'
+                  : 'No ${_status!.name} applications.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, color: _muted),
+            ),
+          ),
+        for (final application in shown)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: Material(
@@ -71,12 +158,7 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
               ),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
-                onTap: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        VendorApplicationDetailsPage(application: application),
-                  ),
-                ),
+                onTap: () => widget.onOpen(application),
                 child: Padding(
                   padding: const EdgeInsets.all(18),
                   child: Column(
@@ -85,12 +167,7 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Image.asset(
-                            application.logoAsset,
-                            width: 48,
-                            height: 48,
-                            excludeFromSemantics: true,
-                          ),
+                          ApplicationLogo(url: application.logoUrl),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
@@ -99,7 +176,7 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
                                 fontSize: 19,
                                 height: 1.4,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF253729),
+                                color: _ink,
                               ),
                             ),
                           ),
@@ -112,11 +189,11 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Submitted ${application.submitted}',
+                        'Submitted ${formatApplicationDate(application.submittedAt)}',
                         style: const TextStyle(
                           fontSize: 13,
                           height: 1.4,
-                          color: Color(0xFF596451),
+                          color: _muted,
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -146,7 +223,7 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
                             style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: Color(0xFF253729),
+                              color: _ink,
                             ),
                           ),
                         ),
@@ -157,13 +234,10 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
                           Expanded(
                             child: Text(
                               'View application details',
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: Color(0xFF344B35),
-                              ),
+                              style: TextStyle(fontSize: 15, color: _green),
                             ),
                           ),
-                          Icon(Icons.arrow_forward, color: Color(0xFF344B35)),
+                          Icon(Icons.arrow_forward, color: _green),
                         ],
                       ),
                     ],
@@ -172,11 +246,6 @@ class _AdminReviewsPageState extends State<AdminReviewsPage> {
               ),
             ),
           ),
-        const Text(
-          'Sample applications · Interface preview',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 12, color: Color(0xFF596451)),
-        ),
       ],
     );
   }

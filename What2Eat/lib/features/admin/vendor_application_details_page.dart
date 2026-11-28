@@ -1,15 +1,53 @@
 import 'package:flutter/material.dart';
 
-import 'vendor_application_preview_data.dart';
+import 'vendor_application_repository.dart';
 
 const _ink = Color(0xFF253729);
 const _green = Color(0xFF344B35);
 const _cream = Color(0xFFFFFCF5);
 const _line = Color(0xFFCBD2BE);
 
+/// Vendor logo from its public URL, with a storefront icon when absent or
+/// unreadable.
+class ApplicationLogo extends StatelessWidget {
+  const ApplicationLogo({super.key, required this.url, this.size = 48});
+  final String? url;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEF1E4),
+        borderRadius: BorderRadius.circular(size * .28),
+      ),
+      child: Icon(Icons.storefront_outlined, color: _green, size: size * .55),
+    );
+    if (url == null) return fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * .28),
+      child: Image.network(
+        url!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        excludeFromSemantics: true,
+        errorBuilder: (_, _, _) => fallback,
+      ),
+    );
+  }
+}
+
 class VendorApplicationDetailsPage extends StatelessWidget {
-  const VendorApplicationDetailsPage({super.key, required this.application});
-  final VendorApplicationPreview application;
+  const VendorApplicationDetailsPage({
+    super.key,
+    required this.application,
+    required this.repository,
+  });
+  final VendorApplication application;
+  final VendorApplicationRepository repository;
 
   Future<void> _previewDecision(BuildContext context, bool approve) =>
       showDialog<void>(
@@ -22,37 +60,27 @@ class VendorApplicationDetailsPage extends StatelessWidget {
 
   Future<void> _document(
     BuildContext context,
-    ApplicationDocumentPreview document,
+    String title,
+    List<VendorApplicationDocument> files,
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text(document.title),
+      title: Text(title),
       scrollable: true,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (var i = 0; i < document.files; i++)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEF1E4),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                children: [
-                  const Icon(
-                    Icons.description_outlined,
-                    size: 44,
-                    color: _green,
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Sample document ${i + 1}', textAlign: TextAlign.center),
-                ],
+          for (var i = 0; i < files.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _DocumentImage(
+                key: ValueKey('document-file-$i'),
+                loadUrl: () => repository.documentUrl(files[i].path),
+                label: files.length == 1
+                    ? title
+                    : '$title (${i + 1} of ${files.length})',
               ),
             ),
-          const Text('No real document is loaded in this interface preview.'),
         ],
       ),
       actions: [
@@ -95,27 +123,39 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: Image.asset(
-                        application.logoAsset,
-                        width: 88,
-                        height: 88,
-                        excludeFromSemantics: true,
+                      child: ApplicationLogo(
+                        url: application.logoUrl,
+                        size: 88,
                       ),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      application.id,
+                      application.reference,
                       style: const TextStyle(fontSize: 14, color: _green),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Submitted ${application.submitted}',
+                      'Submitted ${formatApplicationDate(application.submittedAt)}',
                       style: const TextStyle(fontSize: 14),
                     ),
+                    if (application.reviewedAt != null &&
+                        application.status !=
+                            ApplicationReviewStatus.pending) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Reviewed ${formatApplicationDate(application.reviewedAt!)}',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     Text(
-                      'Sample application · ${application.statusLabel}',
-                      style: const TextStyle(fontSize: 14, color: _green),
+                      'Status · ${application.statusLabel}',
+                      key: const ValueKey('application-status'),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: _green,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
@@ -162,7 +202,12 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final campus in application.campuses)
+                    if (application.universities.isEmpty)
+                      const Text(
+                        'No universities selected.',
+                        style: TextStyle(fontSize: 16, color: _green),
+                      ),
+                    for (final campus in application.universities)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
@@ -181,45 +226,14 @@ class VendorApplicationDetailsPage extends StatelessWidget {
                 title: 'Submitted documents',
                 child: Column(
                   children: [
-                    for (final document in application.documents)
-                      ListTile(
-                        key: ValueKey('document-${document.id}'),
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          document.files == 0
-                              ? Icons.file_present_outlined
-                              : Icons.description_outlined,
-                          color: _green,
-                        ),
-                        title: Text(
-                          document.title,
-                          style: const TextStyle(fontSize: 16, height: 1.4),
-                        ),
-                        subtitle: Text(
-                          document.files == 0
-                              ? 'Not provided · Optional'
-                              : '${document.files} sample ${document.files == 1 ? 'file' : 'files'} · ${document.optional ? 'Optional' : 'Required'}',
-                        ),
-                        trailing: document.files == 0
-                            ? null
-                            : const Icon(Icons.chevron_right),
-                        onTap: document.files == 0
-                            ? null
-                            : () => _document(context, document),
-                      ),
+                    for (final type in vendorDocumentTypes)
+                      _documentTile(context, type),
                   ],
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text(
-                  'The applicant accepted the vendor registration agreement.',
-                  style: TextStyle(fontSize: 14, height: 1.4, color: _green),
-                ),
-              ),
               const Text(
-                'Interface preview only. No real application or document is loaded.',
-                style: TextStyle(fontSize: 12, height: 1.4, color: _green),
+                'The applicant accepted the vendor registration agreement.',
+                style: TextStyle(fontSize: 14, height: 1.4, color: _green),
               ),
             ],
           ),
@@ -288,6 +302,107 @@ class VendorApplicationDetailsPage extends StatelessWidget {
             ),
           ),
   );
+
+  Widget _documentTile(BuildContext context, VendorDocumentType type) {
+    final files = application.documentsOf(type.type);
+    final requirement = type.optional ? 'Optional' : 'Required';
+    return ListTile(
+      key: ValueKey('document-${type.type}'),
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        files.isEmpty
+            ? (type.optional
+                  ? Icons.file_present_outlined
+                  : Icons.error_outline)
+            : Icons.description_outlined,
+        color: files.isEmpty && !type.optional
+            ? const Color(0xFFAC3530)
+            : _green,
+      ),
+      title: Text(
+        type.title,
+        style: const TextStyle(fontSize: 16, height: 1.4),
+      ),
+      subtitle: Text(
+        files.isEmpty
+            ? 'Not provided · $requirement'
+            : '${files.length} ${files.length == 1 ? 'file' : 'files'} · $requirement',
+      ),
+      trailing: files.isEmpty ? null : const Icon(Icons.chevron_right),
+      onTap: files.isEmpty ? null : () => _document(context, type.title, files),
+    );
+  }
+}
+
+/// Requests a signed URL, then shows the image with loading and error states.
+class _DocumentImage extends StatefulWidget {
+  const _DocumentImage({super.key, required this.loadUrl, required this.label});
+  final Future<String> Function() loadUrl;
+  final String label;
+  @override
+  State<_DocumentImage> createState() => _DocumentImageState();
+}
+
+class _DocumentImageState extends State<_DocumentImage> {
+  late Future<String> _url = widget.loadUrl();
+
+  Widget _placeholder(Widget child) => Container(
+    width: double.infinity,
+    height: 220,
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: const Color(0xFFEEF1E4),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: child,
+  );
+
+  Widget _failed() => _placeholder(
+    Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.broken_image_outlined, size: 40, color: _green),
+        const SizedBox(height: 8),
+        const Text('Could not load this file.', textAlign: TextAlign.center),
+        TextButton(
+          onPressed: () => setState(() {
+            // FutureBuilder subscribes on the next frame; avoid an
+            // unhandled-error report if the request fails first.
+            _url = widget.loadUrl()..ignore();
+          }),
+          child: const Text('Retry'),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<String>(
+    future: _url,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) return _failed();
+      if (!snapshot.hasData) {
+        return _placeholder(const CircularProgressIndicator());
+      }
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: InteractiveViewer(
+          maxScale: 5,
+          child: Image.network(
+            snapshot.data!,
+            width: double.infinity,
+            fit: BoxFit.contain,
+            semanticLabel: widget.label,
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : _placeholder(const CircularProgressIndicator()),
+            errorBuilder: (_, _, _) => _failed(),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _Section extends StatelessWidget {
@@ -337,7 +452,7 @@ class _Field extends StatelessWidget {
         Text(label, style: const TextStyle(fontSize: 13, color: _green)),
         const SizedBox(height: 6),
         SelectableText(
-          value,
+          value.isEmpty ? '—' : value,
           style: const TextStyle(fontSize: 16, height: 1.4, color: _ink),
         ),
       ],
